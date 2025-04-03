@@ -1,0 +1,20 @@
+Sure, here's the content for the file: /docker-project/docker-project/docker-compose.yml
+
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./src:/app/src
+    ports:
+      - "5000:5000"
+    environment:
+      - ENV=development
+    command: python src/main.py
+
+networks:
+  default:
+    driver: bridge
