@@ -180,6 +180,23 @@ class PipelineExecutor:
                 "skip_classification": self.config.skip_classification
             }
         }
+    def get_execution_summary(self) -> Dict[str, Any]:
+        """Get a complete summary of the pipeline execution.
+        
+        Returns:
+            Dict[str, Any]: Dictionary containing execution summary including configuration and statistics
+        """
+        if not self._execution_completed:
+            raise RuntimeError("Pipeline has not been executed yet.")
+            
+        return {
+            "execution_status": self._execution_completed,
+            "configuration": self._get_config_summary(),
+            "statistics": self.logger.get_statistics() if hasattr(self.logger, "get_statistics") else {},
+            "phases": [phase.get_description() for phase in self._get_phases_to_run()],
+            "execution_log": self.logger.get_summary() if hasattr(self.logger, "get_summary") else {}
+        }
+
     def register_progress_callback(self, callback):
         """Register a callback for progress updates."""
         self.progress_callback = callback

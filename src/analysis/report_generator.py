@@ -336,7 +336,7 @@ class GenericReportGenerator:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Genera un informe genérico en formato Markdown basado en visualizaciones bibliométricas.')
+    parser = argparse.ArgumentParser(description='Genera un informe')
     
     parser.add_argument('--stats-file', type=str, default='figures/statistics.json',
                        help='Ruta al archivo JSON con estadísticas generadas')
