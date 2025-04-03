@@ -3,12 +3,15 @@ version: '3'
 services:
   web:
     build:
-      context: ../..
+      context: .
       dockerfile: src/web/Dockerfile
     ports:
       - "8501:8501"
     volumes:
-      - ../../secrets:/app/secrets
+      - ./secrets:/app/secrets:ro
+      - ./data:/app/data
+      - ./outputs:/app/outputs
+      - ./figures:/app/figures
     environment:
       - PYTHONPATH=/app
     restart: unless-stopped

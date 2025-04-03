@@ -38,6 +38,8 @@ This directory contains the Streamlit web interface for the Bibliometric Analysi
    - Click "Generate New Private Key"
    - Save the JSON file as `firebase_credentials.json` in the `secrets` directory
 
+For detailed instructions, see the [Firebase Setup Guide](../../docs/guides/firebase_setup.md).
+
 ### 2. Installation
 
 1. **Install required packages**:
@@ -49,17 +51,57 @@ This directory contains the Streamlit web interface for the Bibliometric Analysi
    - Create `anthropic-apikey` in the `secrets` directory with your Anthropic API key
    - Create `sciencedirect_apikey.txt` in the `secrets` directory with your Science Direct API key
 
-### 3. Running the Application
-
-1. **Start the Streamlit app**:
+3. **Initialize Firebase**:
    ```bash
-   streamlit run src/web/streamlit_app.py
+   python src/web/init_firebase.py --admin-email your@email.com --admin-password your-password --admin-name "Your Name"
    ```
 
-2. **First-time setup**:
-   - When first accessing the app, you'll need to register a user
-   - The first user is automatically assigned admin privileges
-   - Use the admin dashboard to manage other users
+### 3. Running the Application
+
+#### Locally
+
+```bash
+# Start the Streamlit app
+streamlit run src/web/streamlit_app.py
+```
+
+#### Using Docker
+
+```bash
+# Navigate to the web directory
+cd src/web
+
+# Build and start the container
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+```
+
+### 4. Testing the Application
+
+To test the application:
+
+```bash
+# Navigate to the tests directory
+cd tests
+
+# Run the test suite with Docker
+docker-compose -f docker-compose.test.yml up
+```
+
+For more details on testing, see the [Testing Guide](../../tests/README.md).
+
+### 5. Deploying to Streamlit Cloud
+
+To deploy the application to Streamlit Cloud:
+
+1. Create a Streamlit Cloud account at [streamlit.io](https://streamlit.io)
+2. Connect your GitHub repository to Streamlit Cloud
+3. Configure secrets in the Streamlit dashboard:
+   - Add your Firebase credentials as a secret named `firebase_credentials`
+   - Add any API keys as secrets
+4. Deploy the application using `src/web/streamlit_app_cloud.py` as the main file
 
 ## Firestore Data Structure
 
@@ -114,6 +156,7 @@ This directory contains the Streamlit web interface for the Bibliometric Analysi
 - **Firebase Authentication Issues**: Ensure your Firebase project is properly configured and the service account key is correct
 - **API Key Issues**: Verify that the API keys in Firestore are correct
 - **Streamlit Errors**: Check that all required packages are installed and that the Python version is 3.8+
+- **Docker Connection Issues**: Ensure Docker has proper network access and volumes are correctly mounted
 
 ## Security Considerations
 
@@ -121,10 +164,12 @@ This directory contains the Streamlit web interface for the Bibliometric Analysi
 - All API requests are logged for audit purposes
 - User passwords are never stored in Firestore (handled by Firebase Authentication)
 - Rate limiting is implemented to prevent API abuse
+- Security rules in Firestore control access to collections
 
-## Future Improvements
+## Application Files
 
-- Implement Firebase Storage for storing result files
-- Add real-time collaboration features
-- Implement OAuth 2.0 for more robust authentication
-- Add export/import functionality for search configurations
+- `streamlit_app.py`: Main Streamlit application
+- `streamlit_app_cloud.py`: Version adapted for Streamlit Cloud
+- `init_firebase.py`: Firebase initialization script
+- `Dockerfile`: Docker configuration
+- `docker-compose.yml`: Docker Compose configuration

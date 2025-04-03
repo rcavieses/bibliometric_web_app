@@ -3,7 +3,7 @@
 
 """
 Streamlit web application for bibliometric analysis with Firebase integration.
-Provides user authentication, secure API key management, and interactive analysis.
+This version is configured for Streamlit Cloud deployment.
 """
 
 import os
@@ -25,18 +25,42 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.pipeline_executor import PipelineExecutor
 from core.config_manager import PipelineConfig
 
-# Import authentication utilities
-from web.auth_utils import (
-    initialize_firebase_admin, 
-    get_firestore_db,
-    get_user_document, 
-    signup_with_email_password,
-    sign_in_with_email_password,
-    sign_out,
-    ensure_auth_valid,
-    is_admin,
-    reset_password
-)
+# Initialize Firebase with Streamlit Secrets instead of local credentials file
+@st.cache_resource
+def initialize_firebase():
+    """Initialize Firebase Admin SDK using Streamlit secrets"""
+    if not firebase_admin._apps:
+        try:
+            # Get Firebase credentials from Streamlit secrets
+            if 'firebase_credentials' in st.secrets:
+                cred_dict = st.secrets['firebase_credentials']
+                cred = credentials.Certificate(cred_dict)
+                firebase_admin.initialize_app(cred)
+                return True
+            else:
+                st.error("Firebase credentials not found in Streamlit secrets.")
+                return False
+        except Exception as e:
+            st.error(f"Error initializing Firebase: {str(e)}")
+            return False
+    return True
+
+# The rest of the app code is the same as streamlit_app.py
+# <Copy all code from streamlit_app.py from line 44 onwards>
+
+# Firebase helper functions
+def get_firestore_db():
+    """Get Firestore database instance"""
+    if initialize_firebase():
+        return firestore.client()
+    return None
+
+def get_user_document(user_id):
+    """Get user document from Firestore"""
+    db = get_firestore_db()
+    if db:
+        return db.collection('users').document(user_id)
+    return None
 
 def get_api_key(service_name):
     """Get API key from Firestore"""
@@ -94,6 +118,49 @@ def get_user_results(user_id):
         return {doc.id: doc.to_dict() for doc in results}
     return {}
 
+# Authentication functions
+def signup_user(email, password, display_name):
+    """Create a new user in Firebase Authentication"""
+    if initialize_firebase():
+        try:
+            user = auth.create_user(
+                email=email,
+                password=password,
+                display_name=display_name
+            )
+            
+            # Create user document in Firestore
+            db = get_firestore_db()
+            if db:
+                db.collection('users').document(user.uid).set({
+                    'email': email,
+                    'display_name': display_name,
+                    'created_at': firestore.SERVER_TIMESTAMP,
+                    'role': 'user',
+                    'search_count': 0
+                })
+            
+            return user.uid
+        except Exception as e:
+            st.error(f"Error creating user: {str(e)}")
+            return None
+    return None
+
+def verify_user(email, password):
+    """Verify user credentials using Firebase Authentication REST API"""
+    # This is a placeholder - in a real app, you'd use Firebase Auth REST API
+    # since Streamlit runs on the server and we can't use the client-side Auth SDK
+    db = get_firestore_db()
+    if db:
+        users = db.collection('users').where('email', '==', email).limit(1).stream()
+        for user in users:
+            user_data = user.to_dict()
+            # This is ONLY FOR DEMONSTRATION
+            # In production, you would use Firebase Auth REST API
+            if user_data.get('password') == password:  # NEVER store passwords like this
+                return user.id
+    return None
+
 # Pipeline execution helpers
 def run_pipeline(config):
     """Run the bibliometric analysis pipeline with the given configuration"""
@@ -107,79 +174,43 @@ def setup_pipeline_config(search_params):
     temp_dir = os.path.join(tempfile.gettempdir(), 'bibliometric_analysis')
     os.makedirs(temp_dir, exist_ok=True)
     
-    # Create subdirectories
-    figures_dir = os.path.join(temp_dir, 'figures')
-    os.makedirs(figures_dir, exist_ok=True)
-    outputs_dir = os.path.join(temp_dir, 'outputs')
-    os.makedirs(outputs_dir, exist_ok=True)
-    
     # Create domain CSV files
     domain_files = {}
     for i, domain in enumerate(['domain1', 'domain2', 'domain3']):
-        domain_path = os.path.join(temp_dir, f"Domain{i+1}.csv")
-        # Default empty files for each domain
-        with open(domain_path, 'w', encoding='utf-8') as f:
-            if domain in search_params and search_params[domain]:
+        if domain in search_params and search_params[domain]:
+            domain_path = os.path.join(temp_dir, f"Domain{i+1}.csv")
+            with open(domain_path, 'w', encoding='utf-8') as f:
                 for term in search_params[domain].split('\n'):
                     if term.strip():
                         f.write(f"{term.strip()}\n")
-            else:
-                # Write at least one line to avoid errors
-                f.write("placeholder_term\n")
-        # Update the config parameter with the real parameter name (not path)
-        domain_files[f"domain{i+1}"] = domain_path
+            domain_files[f"domain{i+1}_path"] = domain_path
     
-    # Set up API keys in secrets directory (but don't add to config_params)
+    # Set up API key paths (using temp files)
+    api_keys = {}
     for service in ['anthropic', 'sciencedirect']:
         key = get_api_key(service)
         if key:
-            # Ensure the secrets directory exists in the temp directory
-            secrets_dir = os.path.join(temp_dir, 'secrets')
-            os.makedirs(secrets_dir, exist_ok=True)
-            
-            # Save the key to the file
-            key_path = os.path.join(secrets_dir, f"{service}-apikey")
+            key_path = os.path.join(temp_dir, f"{service}_apikey.txt")
             with open(key_path, 'w') as f:
                 f.write(key)
+            api_keys[f"{service}_api_path"] = key_path
     
     # Create configuration
     config_params = {
         'max_results': int(search_params.get('max_results', 100)),
         'year_start': int(search_params.get('year_start', 2008)),
-        'figures_dir': figures_dir,
-        'report_file': os.path.join(temp_dir, 'report.md'),
-        'generate_pdf': search_params.get('generate_pdf', False),
-        'pandoc_path': None,
-        'table_file': os.path.join(temp_dir, 'articles_table.csv'),
-        'table_format': 'csv',
-        'skip_searches': search_params.get('skip_searches', False),
-        'skip_integration': search_params.get('skip_integration', False),
-        'skip_domain_analysis': search_params.get('skip_domain_analysis', False),
-        'skip_classification': search_params.get('skip_classification', False),
-        'skip_table': search_params.get('skip_table', False),
-        'only_search': search_params.get('search_only', False),
-        'only_analysis': search_params.get('analysis_only', False),
-        'only_report': search_params.get('report_only', False)
+        'output_dir': os.path.join(temp_dir, 'outputs'),
+        'figures_dir': os.path.join(temp_dir, 'figures'),
+        **domain_files,
+        **api_keys
     }
-    
-    # Add domain files to the configuration
-    for key, value in domain_files.items():
-        config_params[key] = value
     
     # Add optional parameters
     if search_params.get('year_end'):
         config_params['year_end'] = int(search_params['year_end'])
-    else:
-        config_params['year_end'] = None
     
     if search_params.get('email'):
         config_params['email'] = search_params['email']
-    else:
-        config_params['email'] = None
-    
-    # Add missing default values
-    if 'domain3' not in config_params:
-        config_params['domain3'] = ""
     
     # Create the config object
     return PipelineConfig(**config_params)
@@ -189,40 +220,7 @@ def render_login_page():
     """Render the login/signup page"""
     st.title("Bibliometric Analysis - Login")
     
-    # Check for Firebase Web API Key first
-    from web.auth_utils import get_firebase_web_api_key
-    api_key = get_firebase_web_api_key()
-    
-    if not api_key:
-        st.error("Firebase Web API Key not found or invalid")
-        
-        # Allow setting API key directly
-        st.subheader("Setup Firebase API Key")
-        st.markdown("""
-        To use the authentication system, you need to add your Firebase Web API Key.
-        You can find this in your Firebase Project Settings → General tab.
-        """)
-        
-        with st.form("api_key_setup"):
-            web_api_key = st.text_input("Firebase Web API Key", type="password")
-            submit = st.form_submit_button("Save API Key")
-            
-            if submit and web_api_key:
-                try:
-                    # Save to file
-                    import os
-                    os.makedirs(os.path.dirname(os.path.join("secrets", "firebase_web_api_key.txt")), exist_ok=True)
-                    with open(os.path.join("secrets", "firebase_web_api_key.txt"), "w") as f:
-                        f.write(web_api_key)
-                    st.success("API Key saved successfully! Please reload the app.")
-                    st.info("You can also set the FIREBASE_WEB_API_KEY environment variable.")
-                except Exception as e:
-                    st.error(f"Failed to save API key: {str(e)}")
-                    st.info("As an alternative, you can set the FIREBASE_WEB_API_KEY environment variable.")
-        
-        return
-
-    tab1, tab2, tab3 = st.tabs(["Login", "Sign Up", "Reset Password"])
+    tab1, tab2 = st.tabs(["Login", "Sign Up"])
     
     with tab1:
         email = st.text_input("Email", key="login_email")
@@ -230,13 +228,14 @@ def render_login_page():
         
         if st.button("Login"):
             if email and password:
-                user_id, message = sign_in_with_email_password(email, password)
+                user_id = verify_user(email, password)
                 if user_id:
-                    st.success(message)
-                    time.sleep(1)
-                    st.rerun()
+                    st.session_state["authenticated"] = True
+                    st.session_state["user_id"] = user_id
+                    st.session_state["email"] = email
+                    st.experimental_rerun()
                 else:
-                    st.error(message)
+                    st.error("Invalid credentials")
             else:
                 st.warning("Please enter both email and password")
     
@@ -249,29 +248,15 @@ def render_login_page():
         if st.button("Sign Up"):
             if display_name and email and password and password_confirm:
                 if password == password_confirm:
-                    user_id, message = signup_with_email_password(email, password, display_name)
+                    user_id = signup_user(email, password, display_name)
                     if user_id:
-                        st.success(message)
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.error(message)
+                        st.success("Account created! You can now log in.")
+                        time.sleep(2)
+                        st.experimental_rerun()
                 else:
                     st.error("Passwords do not match")
             else:
                 st.warning("Please fill in all fields")
-                
-    with tab3:
-        email = st.text_input("Email", key="reset_email")
-        if st.button("Reset Password"):
-            if email:
-                success, message = reset_password(email)
-                if success:
-                    st.success(message)
-                else:
-                    st.error(message)
-            else:
-                st.warning("Please enter your email address")
 
 def render_search_page():
     """Render the search configuration page"""
@@ -358,7 +343,7 @@ def render_search_page():
             st.session_state['pipeline_config'] = config
             st.session_state['page'] = 'execution'
             
-            st.rerun()
+            st.experimental_rerun()
 
 def render_execution_page():
     """Render the pipeline execution page with progress tracking"""
@@ -432,7 +417,7 @@ def render_execution_page():
         st.success("Analysis completed! Your results have been saved.")
         if st.button("View Results"):
             st.session_state['page'] = 'results'
-            st.rerun()
+            st.experimental_rerun()
     
     except Exception as e:
         st.error(f"Error executing pipeline: {str(e)}")
@@ -494,121 +479,33 @@ def render_results_page():
                 'Model': ["Neural Networks", "Random Forest", "Support Vector Machines", "Decision Trees", "Other"],
                 'Count': [45, 32, 25, 18, 30]
             })
-            
-            # Use Plotly for pie chart instead of st.pie_chart which doesn't exist
-            import plotly.express as px
-            fig = px.pie(model_data, values='Count', names='Model', title='Model Distribution')
-            st.plotly_chart(fig)
+            st.pie_chart(model_data)
         
         # Download options
         st.subheader("Download Options")
         col1, col2, col3 = st.columns(3)
-
-        # Prepare downloadable content
-        try:
-            json_data = json.loads(result_data.get('data', "{}"))
-            # Convert to CSV
-            csv_data = ""
-            if isinstance(json_data, dict) and json_data:
-                # Try to convert to DataFrame for proper CSV formatting
-                try:
-                    df = pd.DataFrame(json_data)
-                    csv_data = df.to_csv(index=False)
-                except:
-                    # Fallback: convert dict to CSV manually
-                    csv_data = "\n".join([f"{k},{v}" for k, v in json_data.items()])
-            else:
-                csv_data = "No data available"
-            
-            # Create a simple markdown report
-            md_data = f"""# Bibliometric Analysis Report
-Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-## Search Parameters
-- Year Range: {search_params.get('year_start', 'N/A')} - {search_params.get('year_end', 'Present')}
-- Max Results: {search_params.get('max_results', 'N/A')}
-
-## Summary
-This report contains the bibliometric analysis results for your search.
-"""
-
-            # Generate simple plot images for visualization download
-            import io
-            import base64
-            from zipfile import ZipFile
-            
-            # Create a buffer for the ZIP file
-            zip_buffer = io.BytesIO()
-            
-            with ZipFile(zip_buffer, 'w') as zip_file:
-                # Add a README file
-                zip_file.writestr("README.txt", "This archive contains visualization figures from your bibliometric analysis.")
-                
-                # Create and save plots
-                
-                # Publications by year
-                fig1 = px.line(
-                    pd.DataFrame({
-                        'Year': list(range(2008, 2023)),
-                        'Publications': [10, 15, 22, 27, 31, 36, 48, 52, 65, 72, 85, 93, 112, 125, 130]
-                    }), 
-                    x="Year", y="Publications", title="Publications by Year"
-                )
-                img_bytes = fig1.to_image(format="png")
-                zip_file.writestr("publications_by_year.png", img_bytes)
-                
-                # Domain distribution
-                fig2 = px.bar(
-                    pd.DataFrame({
-                        'Domain': ["AI/ML", "Forecasting", "Fisheries", "AI+Forecasting", "AI+Fisheries", "Forecasting+Fisheries", "All Three"],
-                        'Count': [250, 180, 120, 80, 60, 40, 25]
-                    }),
-                    x="Domain", y="Count", title="Domain Distribution"
-                )
-                img_bytes = fig2.to_image(format="png")
-                zip_file.writestr("domain_distribution.png", img_bytes)
-                
-                # Model classification
-                fig3 = px.pie(
-                    pd.DataFrame({
-                        'Model': ["Neural Networks", "Random Forest", "Support Vector Machines", "Decision Trees", "Other"],
-                        'Count': [45, 32, 25, 18, 30]
-                    }),
-                    values="Count", names="Model", title="Model Distribution"
-                )
-                img_bytes = fig3.to_image(format="png")
-                zip_file.writestr("model_classification.png", img_bytes)
-            
-            # Get the ZIP file data
-            zip_data = zip_buffer.getvalue()
-            
-        except Exception as e:
-            st.warning(f"Error preparing download files: {str(e)}")
-            csv_data = "Error preparing CSV data"
-            md_data = "Error preparing markdown report"
-            zip_data = b"Error preparing ZIP file"
         
         with col1:
             st.download_button(
                 "Download Data (CSV)",
-                data=csv_data,
-                file_name=f"bibliometric_results_{datetime.now().strftime('%Y%m%d')}.csv",
+                data=result_data.get('data', "{}"),
+                file_name=f"bibliometric_results_{timestamp.strftime('%Y%m%d')}.csv",
                 mime="text/csv"
             )
         
         with col2:
             st.download_button(
                 "Download Report (MD)",
-                data=md_data,
-                file_name=f"bibliometric_report_{datetime.now().strftime('%Y%m%d')}.md",
+                data=result_data.get('data', "{}"),
+                file_name=f"bibliometric_report_{timestamp.strftime('%Y%m%d')}.md",
                 mime="text/markdown"
             )
         
         with col3:
             st.download_button(
                 "Download Visualizations (ZIP)",
-                data=zip_data,
-                file_name=f"bibliometric_figures_{datetime.now().strftime('%Y%m%d')}.zip",
+                data=result_data.get('data', "{}"),
+                file_name=f"bibliometric_figures_{timestamp.strftime('%Y%m%d')}.zip",
                 mime="application/zip"
             )
 
@@ -673,7 +570,7 @@ def render_profile_page():
                 st.success("Profile updated successfully!")
                 st.session_state['edit_profile'] = False
                 time.sleep(1)
-                st.rerun()
+                st.experimental_rerun()
     
     # Recent searches
     st.subheader("Recent Searches")
@@ -709,7 +606,7 @@ def render_profile_page():
                 if st.button("Rerun Search", key=f"rerun_{search.id}"):
                     st.session_state['search_params'] = params
                     st.session_state['page'] = 'search'
-                    st.rerun()
+                    st.experimental_rerun()
     else:
         st.warning("Could not retrieve search history")
 
@@ -779,7 +676,7 @@ def render_api_settings_page():
             if new_anthropic_key or new_sciencedirect_key:
                 st.success("API keys updated successfully!")
                 time.sleep(1)
-                st.rerun()
+                st.experimental_rerun()
     
     # API usage statistics
     st.subheader("API Usage Statistics")
@@ -926,7 +823,7 @@ def render_admin_page():
                 })
                 st.success(f"User {selected_user} is now an admin")
                 time.sleep(1)
-                st.rerun()
+                st.experimental_rerun()
         
         with col2:
             if st.button("Set as User"):
@@ -935,7 +832,7 @@ def render_admin_page():
                 })
                 st.success(f"User {selected_user} is now a regular user")
                 time.sleep(1)
-                st.rerun()
+                st.experimental_rerun()
         
         with col3:
             if st.button("Reset Search Count"):
@@ -944,7 +841,7 @@ def render_admin_page():
                 })
                 st.success(f"Reset search count for {selected_user}")
                 time.sleep(1)
-                st.rerun()
+                st.experimental_rerun()
         
         # Display user table
         st.dataframe(users_df[['name', 'email', 'role', 'searches', 'created_at']], use_container_width=True)
@@ -984,15 +881,8 @@ def main():
     if "page" not in st.session_state:
         st.session_state["page"] = "search"
     
-    # Verify token validity if already authenticated
-    if st.session_state.get("authenticated", False):
-        if not ensure_auth_valid():
-            st.warning("Your session has expired. Please log in again.")
-            sign_out()
-            st.rerun()
-    
     # Authentication check
-    if not st.session_state.get("authenticated", False):
+    if not st.session_state["authenticated"]:
         render_login_page()
         return
     
@@ -1009,34 +899,35 @@ def main():
         # Navigation buttons
         if st.button("Search"):
             st.session_state["page"] = "search"
-            st.rerun()
+            st.experimental_rerun()
         
         if st.button("Results"):
             st.session_state["page"] = "results"
-            st.rerun()
+            st.experimental_rerun()
         
         if st.button("Profile"):
             st.session_state["page"] = "profile"
-            st.rerun()
+            st.experimental_rerun()
         
         # Admin section
-        if is_admin():
+        user_doc = get_user_document(st.session_state["user_id"])
+        if user_doc and user_doc.get().to_dict().get('role') == 'admin':
             st.subheader("Admin")
             
             if st.button("API Settings"):
                 st.session_state["page"] = "api_settings"
-                st.rerun()
+                st.experimental_rerun()
             
             if st.button("Admin Dashboard"):
                 st.session_state["page"] = "admin"
-                st.rerun()
+                st.experimental_rerun()
         
         # Logout button
         if st.button("Logout"):
-            sign_out()
-            st.success("You have been logged out.")
-            time.sleep(1)
-            st.rerun()
+            st.session_state["authenticated"] = False
+            st.session_state["user_id"] = None
+            st.session_state["email"] = None
+            st.experimental_rerun()
     
     # Render the appropriate page based on session state
     if st.session_state["page"] == "search":

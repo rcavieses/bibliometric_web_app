@@ -46,12 +46,20 @@ The application requires the following collections in Firestore:
 
 You don't need to create these collections manually. They will be created automatically when the application first uses them.
 
-## Step 5: Generate Service Account Key
+## Step 5: Generate Service Account Key and Web API Key
 
-1. In the Firebase Console, go to Project Settings (the gear icon in the top left)
-2. Select the "Service accounts" tab
-3. Click on "Generate new private key" under the Firebase Admin SDK section
-4. Save the downloaded JSON file as `firebase_credentials.json` in the `secrets` directory of the project
+1. **Service Account Key:**
+   - In the Firebase Console, go to Project Settings (the gear icon in the top left)
+   - Select the "Service accounts" tab
+   - Click on "Generate new private key" under the Firebase Admin SDK section
+   - Save the downloaded JSON file as `firebase_credentials.json` in the `secrets` directory of the project
+
+2. **Web API Key:**
+   - In Project Settings, go to the "General" tab
+   - Look for "Web API Key" in the project settings
+   - Copy this key and save it in a file called `firebase_web_api_key.txt` in the `secrets` directory
+
+The Web API Key is needed for client-side authentication functions like sign-in and sign-up through the REST API.
 
 ## Step 6: Set Up Security Rules
 
@@ -133,6 +141,40 @@ cd src/web
 docker-compose up -d
 ```
 
+## Step 9: Testing the Application
+
+To test your Firebase integration, follow these steps:
+
+1. Run the test suite:
+
+```bash
+cd tests
+docker-compose -f docker-compose.test.yml up
+```
+
+This will:
+- Build a Docker image using the test configuration
+- Run the test suite against your Firebase setup
+- Verify all Firebase-related functionality works correctly
+
+2. Check the test results to ensure that:
+   - Authentication works properly
+   - Database operations succeed
+   - API key management functions correctly
+
+## Step 10: Deploying to Streamlit Cloud
+
+To deploy your application to Streamlit Cloud:
+
+1. Create a Streamlit account at [streamlit.io](https://streamlit.io)
+2. Connect your GitHub repository to Streamlit
+3. Configure secrets in the Streamlit dashboard:
+   - Add your `firebase_credentials.json` content as a secret
+   - Add any other API keys needed by your application
+4. Deploy your application by specifying `src/web/streamlit_app.py` as the main file
+
+Note: When deploying to Streamlit Cloud, you'll need to modify the Firebase initialization code to read credentials from Streamlit secrets instead of a local file.
+
 ## Troubleshooting
 
 ### Authentication Issues
@@ -152,3 +194,9 @@ docker-compose up -d
 
 - Make sure your API keys are correctly stored in the `api_keys` collection
 - Check that the user making the request has admin privileges
+
+### Streamlit Cloud Deployment Issues
+
+- Verify all secrets are properly configured in the Streamlit dashboard
+- Check the Streamlit logs for any Firebase initialization errors
+- Ensure your Firebase project allows requests from the Streamlit Cloud domain

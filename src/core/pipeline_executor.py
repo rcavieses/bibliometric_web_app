@@ -1,8 +1,8 @@
 from datetime import datetime
 import os
 from typing import List, Dict, Any
-from config.config_manager import PipelineConfig
-from pipeline.phase_runner import PhaseRunner, SearchPhase, AnalysisPhase, ReportPhase, DomainAnalysisPhase, ClassificationPhase,  TableExportPhase  
+from core.config_manager import PipelineConfig
+from core.phase_runner import PhaseRunner, SearchPhase, AnalysisPhase, ReportPhase, DomainAnalysisPhase, ClassificationPhase, TableExportPhase  
 from .logger import Logger
 
 class PipelineExecutor:

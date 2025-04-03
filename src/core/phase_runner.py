@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 import subprocess
 import time
 from typing import List, Optional, Dict, Any, Tuple
-from config.config_manager import PipelineConfig
+from core.config_manager import PipelineConfig
 import sys
 import os
 import json
