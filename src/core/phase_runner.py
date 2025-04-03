@@ -175,7 +175,7 @@ class SearchPhase(PhaseRunner):
         # Run Crossref search
         print("\n----- Búsqueda en Crossref -----\n")
         try:
-            from search.crossref_search import run_crossref_search
+            from src.search.crossref_search import run_crossref_search
             run_crossref_search(
                 domain1_terms=domain1_terms,
                 domain2_terms=domain2_terms,
@@ -195,7 +195,7 @@ class SearchPhase(PhaseRunner):
         if os.path.exists(sciencedirect_apikey_file):
             print("\n----- Búsqueda en Science Direct -----\n")
             try:
-                from search.science_direct_search import run_science_direct_search
+                from src.search.science_direct_search import run_science_direct_search
                 run_science_direct_search(
                     domain1_terms=domain1_terms,
                     domain2_terms=domain2_terms,
@@ -213,7 +213,7 @@ class SearchPhase(PhaseRunner):
         # Run Semantic Scholar search
         print("\n----- Búsqueda en Semantic Scholar -----\n")
         try:
-            from search.semantic_scholar_search import run_semantic_scholar_search
+            from src.search.semantic_scholar_search import run_semantic_scholar_search
             run_semantic_scholar_search(
                 domain1_terms=domain1_terms,
                 domain2_terms=domain2_terms,
@@ -230,7 +230,7 @@ class SearchPhase(PhaseRunner):
         # Run Google Scholar search
         print("\n----- Búsqueda en Google Scholar -----\n")
         try:
-            from search.google_scholar_scraper import run_google_scholar_search
+            from src.search.google_scholar_scraper import run_google_scholar_search
             run_google_scholar_search(
                 domain1_terms=domain1_terms,
                 domain2_terms=domain2_terms,
@@ -250,7 +250,7 @@ class SearchPhase(PhaseRunner):
         """Integrate search results from all sources."""
         print("\n====== INICIANDO INTEGRACIÓN DE RESULTADOS ======\n")
         try:
-            from search.integrated_search import integrate_search_results
+            from src.search.integrated_search import integrate_search_results
             integrate_search_results(
                 sciencedirect_results=self.get_output_path("sciencedirect_results.json"),
                 crossref_results=self.get_output_path("crossref_results.json"), 
@@ -272,7 +272,7 @@ class AnalysisPhase(PhaseRunner):
     def get_command(self) -> List[str]:
         cmd = [
             sys.executable,
-            "analysis_generator.py",
+            "src/analysis/analysis_generator.py",
             "--classified-file", self.get_output_path("classified_results.json"),
             "--abstracts-file", self.get_output_path("integrated_abstracts.json"),
             "--domain-stats-file", self.get_output_path("domain_statistics.csv"),
@@ -290,7 +290,7 @@ class ReportPhase(PhaseRunner):
     def get_command(self) -> List[str]:
         cmd = [
             sys.executable,
-            "report_generator.py",
+            "src/analysis/report_generator.py",
             "--stats-file", os.path.join(self.config.figures_dir, "statistics.json"),
             "--figures-dir", self.config.figures_dir,
             "--output-file", self.config.report_file
@@ -334,7 +334,7 @@ class ClassificationPhase(PhaseRunner):
             print(f"\n===== EJECUTANDO: {self.get_description()} =====")
             
             # Import classification module
-            from analysis.nlp_classifier_anthropic import classify_articles, progress_callback
+            from src.analysis.nlp_classifier_anthropic import classify_articles, progress_callback
             
             # Run classification
             success, summary = classify_articles(
@@ -693,7 +693,7 @@ class TableExportPhase(PhaseRunner):
         try:
             print(f"\n===== EJECUTANDO: {self.get_description()} =====")
             
-            from analysis.export_articles_table import export_articles_table
+            from src.analysis.export_articles_table import export_articles_table
             
             success = export_articles_table(
                 input_file=self.get_output_path("classified_results.json"),
