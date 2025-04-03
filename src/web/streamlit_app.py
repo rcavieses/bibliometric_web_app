@@ -131,21 +131,25 @@ def setup_pipeline_config(search_params):
                         f.write(f"{term.strip()}\n")
             domain_files[f"domain{i+1}"] = domain_path
     
-    # Set up API keys
-    api_keys = {}
-    api_keys["anthropic_api_path"] = "anthropic-apikey"
-    api_keys["sciencedirect_api_path"] = "sciencedirect_apikey.txt"
-    
     # Create output directories
     figures_dir = os.path.join(temp_dir, 'figures')
     os.makedirs(figures_dir, exist_ok=True)
     
-    # Create configuration
+    # Set up API keys
+    api_keys = {}
+    api_keys["anthropic_api_path"] = "secrets/anthropic-apikey"
+    api_keys["sciencedirect_api_path"] = "secrets/sciencedirect_apikey.txt"
+    
+    # Create configuration parameters
     config_params = {
+        'domain1': domain_files.get('domain1', ''),
+        'domain2': domain_files.get('domain2', ''),
+        'domain3': domain_files.get('domain3', ''),
         'max_results': int(search_params.get('max_results', 100)),
         'year_start': int(search_params.get('year_start', 2008)),
         'figures_dir': figures_dir,
-        **domain_files,
+        'report_file': os.path.join(temp_dir, 'report.md'),
+        'table_file': os.path.join(temp_dir, 'articles_table.csv'),
         **api_keys
     }
     
@@ -155,6 +159,16 @@ def setup_pipeline_config(search_params):
     
     if search_params.get('email'):
         config_params['email'] = search_params['email']
+    
+    # Workflow control options
+    if search_params.get('search_only'):
+        config_params['only_search'] = True
+    if search_params.get('analysis_only'):
+        config_params['only_analysis'] = True
+    if search_params.get('report_only'):
+        config_params['only_report'] = True
+    if search_params.get('generate_pdf'):
+        config_params['generate_pdf'] = True
     
     # Create the config object
     return PipelineConfig(**config_params)
@@ -327,55 +341,53 @@ def render_execution_page():
     # In a production app, you would use background jobs
     status_text.text("Starting pipeline execution...")
     
-    # Define phase names and weights for progress calculation
-    phases = [
-        ("Search", 0.2),
-        ("Integration", 0.1),
-        ("Domain Analysis", 0.2),
-        ("Classification", 0.3),
-        ("Analysis Generation", 0.1),
-        ("Report Generation", 0.1)
-    ]
-    
     try:
-        # Mock execution for demonstration
-        # In a real app, you would call run_pipeline(config) and track progress
-        for i, (phase_name, weight) in enumerate(phases):
-            # Skip phases based on user options
-            if search_params.get('search_only') and i > 0:
-                continue
-            if search_params.get('analysis_only') and (i < 2 or i > 4):
-                continue
-            if search_params.get('report_only') and i < 5:
-                continue
-            
-            status_text.text(f"Executing {phase_name} phase...")
-            
-            # Simulate phase execution
-            for j in range(10):
-                # Calculate progress
-                phase_progress = j / 10
-                overall_progress = sum([w for _, w in phases[:i]]) + (phase_progress * weight)
-                progress_bar.progress(min(overall_progress, 1.0))
-                time.sleep(0.2)  # Simulate work
+        # Ejecutar el pipeline real en lugar de la simulación
+        executor = PipelineExecutor(config)
         
-        # Complete the progress
+        # Configurar callbacks para actualizar el progreso
+        def progress_callback(phase, progress, message):
+            status_text.text(message)
+            progress_bar.progress(progress)
+        
+        # Registrar el callback
+        executor.register_progress_callback(progress_callback)
+        
+        # Ejecutar el pipeline
+        success = executor.execute()
+        
+        # Obtener resultados
+        results = executor.get_results()
+        summary = executor.get_execution_summary()
+        
+        # Completar la barra de progreso
         progress_bar.progress(1.0)
-        status_text.text("Pipeline execution completed successfully!")
         
-        # Save results to Firebase
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        save_results_to_firebase(
-            st.session_state["user_id"],
-            f"analysis_results_{timestamp}",
-            {"search_params": search_params, "timestamp": timestamp}
-        )
-        
-        # Show success message and provide results view option
-        st.success("Analysis completed! Your results have been saved.")
-        if st.button("View Results"):
-            st.session_state['page'] = 'results'
-            st.rerun()
+        if success:
+            status_text.text("Pipeline execution completed successfully!")
+            
+            # Guardar resultados en Firebase
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            save_results_to_firebase(
+                st.session_state["user_id"],
+                f"analysis_results_{timestamp}",
+                {
+                    "search_params": search_params,
+                    "timestamp": timestamp,
+                    "summary": summary,
+                    "figures_dir": config.figures_dir
+                }
+            )
+            
+            # Mostrar mensaje de éxito y opciones para ver resultados
+            st.success("Analysis completed! Your results have been saved.")
+            if st.button("View Results"):
+                st.session_state['page'] = 'results'
+                st.session_state['last_results'] = results
+                st.rerun()
+        else:
+            st.error("Pipeline execution failed. Please check the logs for more information.")
+            st.button("Back to Search", on_click=lambda: st.session_state.update({'page': 'search'}))
     
     except Exception as e:
         st.error(f"Error executing pipeline: {str(e)}")
@@ -385,13 +397,66 @@ def render_results_page():
     """Render the results visualization page"""
     st.title("Bibliometric Analysis - Results")
     
-    # Get user's saved results
+    # Verificar si hay resultados recientes de la última ejecución
+    if 'last_results' in st.session_state:
+        # Mostrar resultados recientes
+        st.subheader("Results from latest analysis")
+        
+        # Cargar archivos de resultados reales
+        figures_dir = st.session_state['pipeline_config'].figures_dir
+        report_file = st.session_state['pipeline_config'].report_file
+        
+        # Mostrar figuras
+        if os.path.exists(figures_dir):
+            st.subheader("Visualizations")
+            
+            # Buscar todas las imágenes en el directorio de figuras
+            image_files = [f for f in os.listdir(figures_dir) 
+                         if f.endswith(('.png', '.jpg', '.svg'))]
+            
+            if image_files:
+                for image_file in image_files:
+                    image_path = os.path.join(figures_dir, image_file)
+                    st.image(image_path, caption=image_file)
+            else:
+                st.warning("No visualizations found in the figures directory.")
+        
+        # Mostrar informe
+        if os.path.exists(report_file):
+            st.subheader("Report")
+            with open(report_file, 'r', encoding='utf-8') as f:
+                report_content = f.read()
+            st.markdown(report_content)
+            
+            # Botón de descarga para el informe
+            st.download_button(
+                "Download Report (MD)",
+                data=report_content,
+                file_name="bibliometric_report.md",
+                mime="text/markdown"
+            )
+        else:
+            st.warning("Report file not found.")
+        
+        # Botones para volver o ejecutar nuevo análisis
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("New Analysis"):
+                st.session_state['page'] = 'search'
+                st.rerun()
+        with col2:
+            if st.button("View Saved Results"):
+                # Continuar con la visualización de resultados guardados
+                pass
+    
+    # Obtener resultados guardados del usuario (código existente)
     user_results = get_user_results(st.session_state["user_id"])
     
     if not user_results:
-        st.warning("No saved results found. Run an analysis first.")
-        st.button("Back to Search", on_click=lambda: st.session_state.update({'page': 'search'}))
-        return
+        if 'last_results' not in st.session_state:
+            st.warning("No saved results found. Run an analysis first.")
+            st.button("Back to Search", on_click=lambda: st.session_state.update({'page': 'search'}))
+            return
     
     # Allow user to select which result to view
     result_options = list(user_results.keys())

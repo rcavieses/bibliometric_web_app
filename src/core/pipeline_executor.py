@@ -21,18 +21,28 @@ class PipelineExecutor:
 
         try:
             phases = self._get_phases_to_run()
+            total_phases = len(phases)
             
-            for phase in phases:
+            for i, phase in enumerate(phases):
                 phase_name = phase.get_description()
                 self.logger.start_phase(phase_name)
                 
-                # Ensure each phase is executed only once
+                # Reportar inicio de fase
+                progress = i / total_phases
+                self.report_progress(phase_name, progress, f"Starting {phase_name} phase...")
+                
+                # Ejecutar la fase
                 phase_success = phase.run()
                 details = {"phase": phase_name}
                 
                 if not phase_success:
                     success = False
                     details["error"] = "Phase execution failed"
+                    self.report_progress(phase_name, progress, f"Error in {phase_name} phase")
+                else:
+                    # Reportar finalización de fase
+                    progress = (i + 1) / total_phases
+                    self.report_progress(phase_name, progress, f"Completed {phase_name} phase")
                 
                 self.logger.end_phase(phase_success, details)
                 
@@ -42,11 +52,12 @@ class PipelineExecutor:
         except Exception as e:
             self.logger.log_error(e)
             success = False
+            self.report_progress("Error", 1.0, f"Error: {str(e)}")
         
         # Save execution summary
         stats = {
             "total_phases": len(phases),
-            "completed": len([p for p in phases if p.run()]),  # Avoid re-running phases here
+            "completed": len([p for p in phases if p.run()]),
             "configuration": self._get_config_summary()
         }
         
@@ -146,3 +157,11 @@ class PipelineExecutor:
                 "skip_classification": self.config.skip_classification
             }
         }
+    def register_progress_callback(self, callback):
+        """Register a callback for progress updates."""
+        self.progress_callback = callback
+
+    def report_progress(self, phase, progress, message):
+        """Report progress to registered callback."""
+        if hasattr(self, 'progress_callback') and self.progress_callback:
+            self.progress_callback(phase, progress, message)
