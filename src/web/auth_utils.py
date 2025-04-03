@@ -20,7 +20,14 @@ FIREBASE_WEB_API_KEY_PATH = os.path.join("secrets", "firebase_web_api_key.txt")
 
 def get_firebase_web_api_key():
     """Get Firebase Web API Key from various sources"""
-    # First try to get it from the environment
+    # First try to get it from Streamlit secrets
+    try:
+        if 'firebase_web' in st.secrets and 'api_key' in st.secrets['firebase_web']:
+            return st.secrets['firebase_web']['api_key']
+    except (AttributeError, KeyError):
+        pass
+    
+    # Then try to get it from the environment
     env_key = os.environ.get("FIREBASE_WEB_API_KEY")
     if env_key:
         return env_key
@@ -64,10 +71,32 @@ def get_firebase_web_api_key():
     
     return None
 
+@st.cache_resource
 def initialize_firebase_admin():
     """Initialize Firebase Admin SDK if not already initialized"""
     if not firebase_admin._apps:
-        # Look for the credentials file in secrets directory
+        # First try to use Streamlit secrets
+        try:
+            if 'firebase_credentials' in st.secrets:
+                cred_dict = st.secrets['firebase_credentials']
+                import tempfile
+                with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as f:
+                    json.dump(cred_dict, f)
+                    temp_cred_path = f.name
+                try:
+                    cred = credentials.Certificate(temp_cred_path)
+                    firebase_admin.initialize_app(cred)
+                    # Clean up temporary file
+                    os.unlink(temp_cred_path)
+                    return True
+                except Exception as e:
+                    st.error(f"Error initializing Firebase with Streamlit secrets: {str(e)}")
+                    if os.path.exists(temp_cred_path):
+                        os.unlink(temp_cred_path)
+        except (AttributeError, KeyError, Exception) as e:
+            pass
+            
+        # Fall back to credentials file in secrets directory
         cred_path = os.path.join("secrets", "firebase_credentials.json")
         if os.path.exists(cred_path):
             try:
@@ -79,7 +108,7 @@ def initialize_firebase_admin():
                 st.error("Make sure your firebase_credentials.json file is properly formatted and has the correct permissions.")
                 return False
         else:
-            st.error("Firebase credentials not found. Please add a 'firebase_credentials.json' file to the secrets directory.")
+            st.error("Firebase credentials not found in Streamlit secrets or local file.")
             st.markdown("""
             ### Firebase Setup Instructions:
             
@@ -88,7 +117,7 @@ def initialize_firebase_admin():
             3. Click the gear icon ⚙️ (Project Settings)
             4. Go to "Service accounts" tab
             5. Click "Generate new private key"
-            6. Save the JSON file as `firebase_credentials.json` in the `secrets` directory
+            6. Save the JSON file as `firebase_credentials.json` in the `secrets` directory or add to Streamlit secrets
             """)
             return False
     return True

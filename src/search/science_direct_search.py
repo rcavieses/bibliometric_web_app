@@ -15,21 +15,16 @@ from elsapy.elsclient import ElsClient
 from elsapy.elssearch import ElsSearch
 
 
-def load_api_key(filepath: str = "sciencedirect_apikey.txt") -> str:
-    """
-    Carga la API key de Science Direct desde un archivo.
-    
-    Args:
-        filepath: Ruta al archivo que contiene la API key.
-        
-    Returns:
-        API key como string.
-    """
+def load_api_key(filepath: str = "secrets/sciencedirect_apikey.txt") -> str:
+    """Load the Science Direct API key from file."""
     try:
-        with open(filepath, 'r') as file:
+        abs_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), filepath)
+        with open(abs_path, 'r') as file:
             return file.read().strip()
     except FileNotFoundError:
-        raise FileNotFoundError(f"No se encontró el archivo {filepath} con la API key.")
+        raise FileNotFoundError(f"Science Direct API key file not found at {filepath}")
+    except Exception as e:
+        raise Exception(f"Error loading Science Direct API key: {str(e)}")
 
 
 def construct_query(domain_terms_list: List[List[str]]) -> str:

@@ -15,7 +15,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "bibliometric=cli.pipeline_executor_main:main",
+            "bibliometric=src.cli.pipeline_executor_main:main",
         ],
     },
     description="A bibliometric analysis and literature review tool",

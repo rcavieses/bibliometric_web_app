@@ -1,9 +1,9 @@
 from datetime import datetime
 import os
 from typing import List, Dict, Any
-from core.config_manager import PipelineConfig
-from core.phase_runner import PhaseRunner, SearchPhase, AnalysisPhase, ReportPhase, DomainAnalysisPhase, ClassificationPhase, TableExportPhase  
-from .logger import Logger
+from src.config.config_manager import PipelineConfig
+from src.core.phase_runner import PhaseRunner, SearchPhase, AnalysisPhase, ReportPhase, DomainAnalysisPhase, ClassificationPhase, TableExportPhase  
+from src.core.logger import Logger
 
 class PipelineExecutor:
     def __init__(self, config: PipelineConfig):

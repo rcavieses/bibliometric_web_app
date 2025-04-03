@@ -11,7 +11,8 @@ import os
 import json
 import csv
 import re
-from typing import List, Dict, Any, Tuple, Counter
+from typing import List, Dict, Any, Tuple
+from collections import Counter
 from collections import defaultdict
 
 

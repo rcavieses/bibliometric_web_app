@@ -12,9 +12,9 @@ import sys
 import time
 from typing import Optional
 
-from config.config_manager import ConfigManager, PipelineConfig
-from pipeline.pipeline_executor import PipelineExecutor
-from pipeline.logger import Logger
+from src.config.config_manager import ConfigManager, PipelineConfig
+from src.core.pipeline_executor import PipelineExecutor
+from src.core.logger import Logger
 
 
 def run_pipeline(config: Optional[PipelineConfig] = None) -> bool:

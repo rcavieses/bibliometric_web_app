@@ -3,7 +3,7 @@
 
 """
 Streamlit web application for bibliometric analysis with Firebase integration.
-This version is configured for Streamlit Cloud deployment.
+Provides user authentication, secure API key management, and interactive analysis.
 """
 
 import os
@@ -14,39 +14,42 @@ import tempfile
 import pandas as pd
 import streamlit as st
 from pathlib import Path
-import firebase_admin
-from firebase_admin import credentials, firestore, auth, storage
 from datetime import datetime
+import firebase_admin
+from firebase_admin import credentials, firestore, auth
 
-# Add the parent directory to the path so we can import our modules
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add the src directory to the Python path
+src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if src_dir not in sys.path:
+    sys.path.append(src_dir)
 
 # Import the core modules
+from config.config_manager import PipelineConfig
 from core.pipeline_executor import PipelineExecutor
-from core.config_manager import PipelineConfig
+from web.auth_utils import (
+    initialize_firebase_admin, sign_in_with_email_password, 
+    signup_with_email_password, sign_out, ensure_auth_valid, 
+    get_user_document, is_admin, reset_password
+)
 
-# Initialize Firebase with Streamlit Secrets instead of local credentials file
+# Initialize Firebase with local credentials
 @st.cache_resource
 def initialize_firebase():
-    """Initialize Firebase Admin SDK using Streamlit secrets"""
+    """Initialize Firebase Admin SDK using local credentials file"""
     if not firebase_admin._apps:
         try:
-            # Get Firebase credentials from Streamlit secrets
-            if 'firebase_credentials' in st.secrets:
-                cred_dict = st.secrets['firebase_credentials']
-                cred = credentials.Certificate(cred_dict)
+            cred_path = os.path.join("secrets", "firebase_credentials.json")
+            if os.path.exists(cred_path):
+                cred = credentials.Certificate(cred_path)
                 firebase_admin.initialize_app(cred)
                 return True
             else:
-                st.error("Firebase credentials not found in Streamlit secrets.")
+                st.error("Firebase credentials file not found in secrets directory")
                 return False
         except Exception as e:
             st.error(f"Error initializing Firebase: {str(e)}")
             return False
     return True
-
-# The rest of the app code is the same as streamlit_app.py
-# <Copy all code from streamlit_app.py from line 44 onwards>
 
 # Firebase helper functions
 def get_firestore_db():
@@ -63,15 +66,22 @@ def get_user_document(user_id):
     return None
 
 def get_api_key(service_name):
-    """Get API key from Firestore"""
-    if not st.session_state.get("user_id"):
-        return None
-    
-    db = get_firestore_db()
-    if db:
-        api_key_doc = db.collection('api_keys').document(service_name).get()
-        if api_key_doc.exists:
-            return api_key_doc.to_dict().get('key')
+    """Get API key from local file"""
+    try:
+        key_paths = {
+            'anthropic': os.path.join("secrets", "anthropic-apikey"),
+            'sciencedirect': os.path.join("secrets", "sciencedirect_apikey.txt")
+        }
+        
+        if service_name not in key_paths:
+            return None
+            
+        key_path = key_paths[service_name]
+        if os.path.exists(key_path):
+            with open(key_path, 'r') as f:
+                return f.read().strip()
+    except Exception as e:
+        st.error(f"Error loading API key for {service_name}: {str(e)}")
     return None
 
 def log_api_usage(service_name, user_id):
@@ -119,47 +129,11 @@ def get_user_results(user_id):
     return {}
 
 # Authentication functions
-def signup_user(email, password, display_name):
-    """Create a new user in Firebase Authentication"""
-    if initialize_firebase():
-        try:
-            user = auth.create_user(
-                email=email,
-                password=password,
-                display_name=display_name
-            )
-            
-            # Create user document in Firestore
-            db = get_firestore_db()
-            if db:
-                db.collection('users').document(user.uid).set({
-                    'email': email,
-                    'display_name': display_name,
-                    'created_at': firestore.SERVER_TIMESTAMP,
-                    'role': 'user',
-                    'search_count': 0
-                })
-            
-            return user.uid
-        except Exception as e:
-            st.error(f"Error creating user: {str(e)}")
-            return None
-    return None
+# User signup function is now handled by auth_utils.py
+# The signup_user function has been replaced by signup_with_email_password
 
-def verify_user(email, password):
-    """Verify user credentials using Firebase Authentication REST API"""
-    # This is a placeholder - in a real app, you'd use Firebase Auth REST API
-    # since Streamlit runs on the server and we can't use the client-side Auth SDK
-    db = get_firestore_db()
-    if db:
-        users = db.collection('users').where('email', '==', email).limit(1).stream()
-        for user in users:
-            user_data = user.to_dict()
-            # This is ONLY FOR DEMONSTRATION
-            # In production, you would use Firebase Auth REST API
-            if user_data.get('password') == password:  # NEVER store passwords like this
-                return user.id
-    return None
+# Authentication functions are now handled by auth_utils.py
+# The verify_user function has been replaced by sign_in_with_email_password
 
 # Pipeline execution helpers
 def run_pipeline(config):
@@ -185,15 +159,12 @@ def setup_pipeline_config(search_params):
                         f.write(f"{term.strip()}\n")
             domain_files[f"domain{i+1}_path"] = domain_path
     
-    # Set up API key paths (using temp files)
+    # Set up API keys - pass directly, the functions will get them from secrets
     api_keys = {}
-    for service in ['anthropic', 'sciencedirect']:
-        key = get_api_key(service)
-        if key:
-            key_path = os.path.join(temp_dir, f"{service}_apikey.txt")
-            with open(key_path, 'w') as f:
-                f.write(key)
-            api_keys[f"{service}_api_path"] = key_path
+    # We don't need to create temp files anymore as the API loading functions can read from secrets
+    # Just use placeholder paths to maintain compatibility
+    api_keys["anthropic_api_path"] = "anthropic-apikey"
+    api_keys["sciencedirect_api_path"] = "sciencedirect_apikey.txt"
     
     # Create configuration
     config_params = {
@@ -220,22 +191,21 @@ def render_login_page():
     """Render the login/signup page"""
     st.title("Bibliometric Analysis - Login")
     
-    tab1, tab2 = st.tabs(["Login", "Sign Up"])
+    tab1, tab2, tab3 = st.tabs(["Login", "Sign Up", "Reset Password"])
     
     with tab1:
         email = st.text_input("Email", key="login_email")
         password = st.text_input("Password", type="password", key="login_password")
         
-        if st.button("Login"):
+        if st.button("Login", key="login_button"):
             if email and password:
-                user_id = verify_user(email, password)
+                user_id, message = sign_in_with_email_password(email, password)
                 if user_id:
-                    st.session_state["authenticated"] = True
-                    st.session_state["user_id"] = user_id
-                    st.session_state["email"] = email
+                    st.success(message)
+                    time.sleep(1)
                     st.experimental_rerun()
                 else:
-                    st.error("Invalid credentials")
+                    st.error(message)
             else:
                 st.warning("Please enter both email and password")
     
@@ -245,18 +215,33 @@ def render_login_page():
         password = st.text_input("Password", type="password", key="signup_password")
         password_confirm = st.text_input("Confirm Password", type="password", key="signup_password_confirm")
         
-        if st.button("Sign Up"):
+        if st.button("Sign Up", key="signup_button"):
             if display_name and email and password and password_confirm:
                 if password == password_confirm:
-                    user_id = signup_user(email, password, display_name)
+                    user_id, message = signup_with_email_password(email, password, display_name)
                     if user_id:
-                        st.success("Account created! You can now log in.")
-                        time.sleep(2)
+                        st.success(message)
+                        time.sleep(1)
                         st.experimental_rerun()
+                    else:
+                        st.error(message)
                 else:
                     st.error("Passwords do not match")
             else:
                 st.warning("Please fill in all fields")
+    
+    with tab3:
+        email = st.text_input("Email", key="reset_email")
+        
+        if st.button("Send Reset Link", key="reset_button"):
+            if email:
+                success, message = reset_password(email)
+                if success:
+                    st.success(message)
+                else:
+                    st.error(message)
+            else:
+                st.warning("Please enter your email address")
 
 def render_search_page():
     """Render the search configuration page"""
@@ -614,334 +599,18 @@ def render_api_settings_page():
     """Render the API settings page"""
     st.title("API Settings")
     
-    # Check if user has admin privileges
-    user_doc = get_user_document(st.session_state["user_id"])
-    if not user_doc:
-        st.error("Could not retrieve user information")
+    # Verify user is authenticated
+    if not ensure_auth_valid():
+        st.error("Please log in to access API settings")
         return
-    
-    user_data = user_doc.get().to_dict()
-    is_admin = user_data.get('role') == 'admin'
-    
-    if not is_admin:
+        
+    # Check if user has admin privileges
+    if not is_admin():
         st.warning("You need administrator privileges to manage API keys.")
         return
     
-    # Get current API keys
+    # Get Firestore database
     db = get_firestore_db()
     if not db:
-        st.error("Could not connect to the database")
+        st.error("Could not connect to database")
         return
-    
-    api_keys = db.collection('api_keys').stream()
-    api_keys_dict = {doc.id: doc.to_dict() for doc in api_keys}
-    
-    # Display API key management interface
-    st.subheader("Manage API Keys")
-    
-    with st.form("api_keys_form"):
-        # Anthropic API
-        anthropic_key = api_keys_dict.get('anthropic', {}).get('key', '')
-        anthropic_masked = "•" * len(anthropic_key) if anthropic_key else ""
-        
-        st.text_input("Anthropic API Key", value=anthropic_masked, disabled=True)
-        new_anthropic_key = st.text_input("New Anthropic API Key (leave empty to keep current)")
-        
-        # Science Direct API
-        sciencedirect_key = api_keys_dict.get('sciencedirect', {}).get('key', '')
-        sciencedirect_masked = "•" * len(sciencedirect_key) if sciencedirect_key else ""
-        
-        st.text_input("Science Direct API Key", value=sciencedirect_masked, disabled=True)
-        new_sciencedirect_key = st.text_input("New Science Direct API Key (leave empty to keep current)")
-        
-        submitted = st.form_submit_button("Update API Keys")
-        
-        if submitted:
-            # Update Anthropic API key
-            if new_anthropic_key:
-                db.collection('api_keys').document('anthropic').set({
-                    'key': new_anthropic_key,
-                    'updated_at': firestore.SERVER_TIMESTAMP,
-                    'updated_by': st.session_state["user_id"]
-                })
-            
-            # Update Science Direct API key
-            if new_sciencedirect_key:
-                db.collection('api_keys').document('sciencedirect').set({
-                    'key': new_sciencedirect_key,
-                    'updated_at': firestore.SERVER_TIMESTAMP,
-                    'updated_by': st.session_state["user_id"]
-                })
-            
-            if new_anthropic_key or new_sciencedirect_key:
-                st.success("API keys updated successfully!")
-                time.sleep(1)
-                st.experimental_rerun()
-    
-    # API usage statistics
-    st.subheader("API Usage Statistics")
-    
-    # Get API usage statistics
-    api_usage_stats = {
-        'anthropic': 0,
-        'sciencedirect': 0
-    }
-    
-    usage_docs = db.collection('api_usage').stream()
-    for doc in usage_docs:
-        service = doc.to_dict().get('service')
-        if service in api_usage_stats:
-            api_usage_stats[service] += 1
-    
-    # Display usage statistics
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.metric("Anthropic API Calls", api_usage_stats['anthropic'])
-    
-    with col2:
-        st.metric("Science Direct API Calls", api_usage_stats['sciencedirect'])
-    
-    # User usage breakdown
-    st.subheader("User Usage Breakdown")
-    
-    user_usage = {}
-    usage_docs = db.collection('api_usage').stream()
-    for doc in usage_docs:
-        usage_data = doc.to_dict()
-        user_id = usage_data.get('user_id')
-        service = usage_data.get('service')
-        
-        if user_id not in user_usage:
-            user_usage[user_id] = {
-                'anthropic': 0,
-                'sciencedirect': 0
-            }
-        
-        if service in user_usage[user_id]:
-            user_usage[user_id][service] += 1
-    
-    # Convert to DataFrame for display
-    if user_usage:
-        usage_data = []
-        for user_id, services in user_usage.items():
-            # Get user name
-            user_doc = db.collection('users').document(user_id).get()
-            user_name = user_doc.to_dict().get('display_name', 'Unknown') if user_doc.exists else 'Unknown'
-            
-            usage_data.append({
-                'User': user_name,
-                'Anthropic API': services['anthropic'],
-                'Science Direct API': services['sciencedirect'],
-                'Total': services['anthropic'] + services['sciencedirect']
-            })
-        
-        usage_df = pd.DataFrame(usage_data)
-        st.dataframe(usage_df, use_container_width=True)
-    else:
-        st.info("No API usage data available")
-
-def render_admin_page():
-    """Render the admin dashboard page"""
-    st.title("Admin Dashboard")
-    
-    # Check if user has admin privileges
-    user_doc = get_user_document(st.session_state["user_id"])
-    if not user_doc:
-        st.error("Could not retrieve user information")
-        return
-    
-    user_data = user_doc.get().to_dict()
-    is_admin = user_data.get('role') == 'admin'
-    
-    if not is_admin:
-        st.warning("You need administrator privileges to access this page.")
-        return
-    
-    # Get database connection
-    db = get_firestore_db()
-    if not db:
-        st.error("Could not connect to the database")
-        return
-    
-    # Display system metrics
-    st.subheader("System Metrics")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    # Calculate metrics
-    # In a real app, these would be actual queries to Firestore
-    total_users = 15
-    total_searches = 342
-    api_calls = 1283
-    active_users = 8
-    
-    with col1:
-        st.metric("Total Users", total_users)
-    
-    with col2:
-        st.metric("Total Searches", total_searches)
-    
-    with col3:
-        st.metric("API Calls", api_calls)
-    
-    with col4:
-        st.metric("Active Users (24h)", active_users)
-    
-    # User management
-    st.subheader("User Management")
-    
-    # Get all users
-    users = db.collection('users').stream()
-    users_list = []
-    
-    for user in users:
-        user_data = user.to_dict()
-        users_list.append({
-            'id': user.id,
-            'name': user_data.get('display_name', 'Unknown'),
-            'email': user_data.get('email', 'Unknown'),
-            'role': user_data.get('role', 'user'),
-            'searches': user_data.get('search_count', 0),
-            'created_at': user_data.get('created_at', datetime.now())
-        })
-    
-    # Convert to DataFrame for display
-    if users_list:
-        users_df = pd.DataFrame(users_list)
-        
-        # Add action buttons
-        selected_user = st.selectbox("Select User", users_df['email'])
-        selected_user_id = users_df[users_df['email'] == selected_user]['id'].iloc[0]
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if st.button("Set as Admin"):
-                db.collection('users').document(selected_user_id).update({
-                    'role': 'admin'
-                })
-                st.success(f"User {selected_user} is now an admin")
-                time.sleep(1)
-                st.experimental_rerun()
-        
-        with col2:
-            if st.button("Set as User"):
-                db.collection('users').document(selected_user_id).update({
-                    'role': 'user'
-                })
-                st.success(f"User {selected_user} is now a regular user")
-                time.sleep(1)
-                st.experimental_rerun()
-        
-        with col3:
-            if st.button("Reset Search Count"):
-                db.collection('users').document(selected_user_id).update({
-                    'search_count': 0
-                })
-                st.success(f"Reset search count for {selected_user}")
-                time.sleep(1)
-                st.experimental_rerun()
-        
-        # Display user table
-        st.dataframe(users_df[['name', 'email', 'role', 'searches', 'created_at']], use_container_width=True)
-    else:
-        st.info("No users found")
-    
-    # System logs
-    st.subheader("System Logs")
-    
-    # In a real app, you would have a logs collection
-    # This is just a placeholder
-    log_data = [
-        {"timestamp": "2025-04-02 10:15:23", "level": "INFO", "message": "User login: john@example.com"},
-        {"timestamp": "2025-04-02 09:45:12", "level": "WARNING", "message": "API rate limit approaching: Anthropic"},
-        {"timestamp": "2025-04-02 09:30:05", "level": "ERROR", "message": "Search pipeline failed for user sarah@example.com"},
-        {"timestamp": "2025-04-02 08:15:47", "level": "INFO", "message": "API key updated: Science Direct"},
-        {"timestamp": "2025-04-01 23:45:33", "level": "INFO", "message": "New user registered: robert@example.com"}
-    ]
-    
-    logs_df = pd.DataFrame(log_data)
-    st.dataframe(logs_df, use_container_width=True)
-
-def main():
-    """Main function to run the Streamlit app"""
-    # Set page config
-    st.set_page_config(
-        page_title="Bibliometric Analysis Tool",
-        page_icon="📚",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
-    
-    # Initialize session state if needed
-    if "authenticated" not in st.session_state:
-        st.session_state["authenticated"] = False
-    
-    if "page" not in st.session_state:
-        st.session_state["page"] = "search"
-    
-    # Authentication check
-    if not st.session_state["authenticated"]:
-        render_login_page()
-        return
-    
-    # Sidebar navigation
-    with st.sidebar:
-        st.title("Navigation")
-        
-        # User info
-        user_doc = get_user_document(st.session_state["user_id"])
-        if user_doc:
-            user_data = user_doc.get().to_dict()
-            st.write(f"Welcome, **{user_data.get('display_name', 'User')}**!")
-        
-        # Navigation buttons
-        if st.button("Search"):
-            st.session_state["page"] = "search"
-            st.experimental_rerun()
-        
-        if st.button("Results"):
-            st.session_state["page"] = "results"
-            st.experimental_rerun()
-        
-        if st.button("Profile"):
-            st.session_state["page"] = "profile"
-            st.experimental_rerun()
-        
-        # Admin section
-        user_doc = get_user_document(st.session_state["user_id"])
-        if user_doc and user_doc.get().to_dict().get('role') == 'admin':
-            st.subheader("Admin")
-            
-            if st.button("API Settings"):
-                st.session_state["page"] = "api_settings"
-                st.experimental_rerun()
-            
-            if st.button("Admin Dashboard"):
-                st.session_state["page"] = "admin"
-                st.experimental_rerun()
-        
-        # Logout button
-        if st.button("Logout"):
-            st.session_state["authenticated"] = False
-            st.session_state["user_id"] = None
-            st.session_state["email"] = None
-            st.experimental_rerun()
-    
-    # Render the appropriate page based on session state
-    if st.session_state["page"] == "search":
-        render_search_page()
-    elif st.session_state["page"] == "execution":
-        render_execution_page()
-    elif st.session_state["page"] == "results":
-        render_results_page()
-    elif st.session_state["page"] == "profile":
-        render_profile_page()
-    elif st.session_state["page"] == "api_settings":
-        render_api_settings_page()
-    elif st.session_state["page"] == "admin":
-        render_admin_page()
-
-if __name__ == "__main__":
-    main()

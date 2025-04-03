@@ -2,17 +2,48 @@ from abc import ABC, abstractmethod
 import subprocess
 import time
 from typing import List, Optional, Dict, Any, Tuple
-from core.config_manager import PipelineConfig
+from src.config.config_manager import PipelineConfig
 import sys
 import os
 import json
 import csv
 import re
 from collections import defaultdict
+from pathlib import Path
 
 class PhaseRunner(ABC):
     def __init__(self, config: PipelineConfig):
         self.config = config
+        self.base_dir = os.getcwd()
+        self.output_dir = os.path.join(self.base_dir, "outputs")
+        self.secrets_dir = os.path.join(self.base_dir, "secrets")
+        
+        # Ensure critical directories exist
+        os.makedirs(self.output_dir, exist_ok=True)
+        os.makedirs(self.secrets_dir, exist_ok=True)
+        os.makedirs(self.config.figures_dir, exist_ok=True)
+    
+    def get_output_path(self, filename: str) -> str:
+        """Get absolute path for an output file.
+        
+        Args:
+            filename: Name of the file (without directory)
+            
+        Returns:
+            str: Absolute path to the file in the output directory
+        """
+        return os.path.join(self.output_dir, filename)
+    
+    def get_secret_path(self, filename: str) -> str:
+        """Get absolute path for a secret file.
+        
+        Args:
+            filename: Name of the file (without directory)
+            
+        Returns:
+            str: Absolute path to the file in the secrets directory
+        """
+        return os.path.join(self.secrets_dir, filename)
     
     @abstractmethod
     def get_command(self) -> List[str]:
@@ -44,7 +75,7 @@ class PhaseRunner(ABC):
 class SearchPhase(PhaseRunner):
     """Phase runner for academic search and integration."""
     def __init__(self, config: PipelineConfig):
-        self.config = config
+        super().__init__(config)
 
     def get_command(self) -> List[str]:
         """For backward compatibility with subprocess execution"""
@@ -83,13 +114,10 @@ class SearchPhase(PhaseRunner):
         try:
             print(f"\n===== EJECUTANDO: {self.get_description()} =====")
             
-            # Create output directory
-            os.makedirs("outputs", exist_ok=True)
-            
-            # Load domain terms
-            domain1_terms = self._load_domain_terms(self.config.domain1)
-            domain2_terms = self._load_domain_terms(self.config.domain2)
-            domain3_terms = self._load_domain_terms(self.config.domain3) if self.config.domain3 else None
+            # Load domain terms from absolute paths
+            domain1_terms = self._load_domain_terms(os.path.abspath(self.config.domain1))
+            domain2_terms = self._load_domain_terms(os.path.abspath(self.config.domain2))
+            domain3_terms = self._load_domain_terms(os.path.abspath(self.config.domain3)) if self.config.domain3 else None
             
             # Run the search phase
             if not self.config.skip_searches:
@@ -144,19 +172,16 @@ class SearchPhase(PhaseRunner):
         """Run searches in all academic sources."""
         print("\n====== INICIANDO BÚSQUEDAS EN FUENTES ACADÉMICAS ======\n")
         
-        # Ensure base directory exists
-        os.makedirs("outputs", exist_ok=True)
-        
         # Run Crossref search
         print("\n----- Búsqueda en Crossref -----\n")
         try:
-            from crossref_search import run_crossref_search
+            from search.crossref_search import run_crossref_search
             run_crossref_search(
                 domain1_terms=domain1_terms,
                 domain2_terms=domain2_terms,
                 domain3_terms=domain3_terms,
-                results_file="crossref_results.json",  # Let script handle file path
-                abstracts_file="crossref_abstracts.json",
+                results_file=self.get_output_path("crossref_results.json"),
+                abstracts_file=self.get_output_path("crossref_abstracts.json"),
                 max_results=max_results,
                 email=email,
                 year_start=year_start,
@@ -166,18 +191,18 @@ class SearchPhase(PhaseRunner):
             print(f"Error en búsqueda Crossref: {str(e)}")
         
         # Run Science Direct search if API key exists
-        sciencedirect_apikey_file = os.path.join("secrets", "sciencedirect_apikey.txt")
+        sciencedirect_apikey_file = self.get_secret_path("sciencedirect_apikey.txt")
         if os.path.exists(sciencedirect_apikey_file):
             print("\n----- Búsqueda en Science Direct -----\n")
             try:
-                from science_direct_search import run_science_direct_search
+                from search.science_direct_search import run_science_direct_search
                 run_science_direct_search(
                     domain1_terms=domain1_terms,
                     domain2_terms=domain2_terms,
                     domain3_terms=domain3_terms,
                     apikey_file=sciencedirect_apikey_file,
-                    results_file="sciencedirect_results.json",  # Let script handle file path
-                    abstracts_file="sciencedirect_abstracts.json",
+                    results_file=self.get_output_path("sciencedirect_results.json"),
+                    abstracts_file=self.get_output_path("sciencedirect_abstracts.json"),
                     max_results=max_results,
                     fetch_details=True,
                     year_range=(year_start, year_end) if year_start or year_end else None
@@ -188,13 +213,13 @@ class SearchPhase(PhaseRunner):
         # Run Semantic Scholar search
         print("\n----- Búsqueda en Semantic Scholar -----\n")
         try:
-            from semantic_scholar_search import run_semantic_scholar_search
+            from search.semantic_scholar_search import run_semantic_scholar_search
             run_semantic_scholar_search(
                 domain1_terms=domain1_terms,
                 domain2_terms=domain2_terms,
                 domain3_terms=domain3_terms,
-                results_file="semanticscholar_results.json",  # Let script handle file path
-                abstracts_file="semanticscholar_abstracts.json",
+                results_file=self.get_output_path("semanticscholar_results.json"),
+                abstracts_file=self.get_output_path("semanticscholar_abstracts.json"),
                 max_results=max_results,
                 year_start=year_start,
                 year_end=year_end
@@ -205,12 +230,12 @@ class SearchPhase(PhaseRunner):
         # Run Google Scholar search
         print("\n----- Búsqueda en Google Scholar -----\n")
         try:
-            from google_scholar_scraper import run_google_scholar_search
+            from search.google_scholar_scraper import run_google_scholar_search
             run_google_scholar_search(
                 domain1_terms=domain1_terms,
                 domain2_terms=domain2_terms,
                 domain3_terms=domain3_terms,
-                output_file="google_scholar_results.json",  # Let script handle file path
+                output_file=self.get_output_path("google_scholar_results.json"),
                 integrated_results_file=None,
                 max_results=max_results,
                 year_start=year_start,
@@ -225,32 +250,32 @@ class SearchPhase(PhaseRunner):
         """Integrate search results from all sources."""
         print("\n====== INICIANDO INTEGRACIÓN DE RESULTADOS ======\n")
         try:
-            from integrated_search import integrate_search_results
+            from search.integrated_search import integrate_search_results
             integrate_search_results(
-                sciencedirect_results="sciencedirect_results.json",
-                crossref_results="crossref_results.json", 
-                semanticscholar_results="semanticscholar_results.json",
-                google_scholar_results="google_scholar_results.json",
-                sciencedirect_abstracts="sciencedirect_abstracts.json",
-                crossref_abstracts="crossref_abstracts.json",
-                semanticscholar_abstracts="semanticscholar_abstracts.json",
-                output_results="integrated_results.json",
-                output_abstracts="integrated_abstracts.json"
+                sciencedirect_results=self.get_output_path("sciencedirect_results.json"),
+                crossref_results=self.get_output_path("crossref_results.json"), 
+                semanticscholar_results=self.get_output_path("semanticscholar_results.json"),
+                google_scholar_results=self.get_output_path("google_scholar_results.json"),
+                sciencedirect_abstracts=self.get_output_path("sciencedirect_abstracts.json"),
+                crossref_abstracts=self.get_output_path("crossref_abstracts.json"),
+                semanticscholar_abstracts=self.get_output_path("semanticscholar_abstracts.json"),
+                output_results=self.get_output_path("integrated_results.json"),
+                output_abstracts=self.get_output_path("integrated_abstracts.json")
             )
         except Exception as e:
             print(f"Error durante la integración: {str(e)}")
 
 class AnalysisPhase(PhaseRunner):
     def __init__(self, config: PipelineConfig):
-        self.config = config
+        super().__init__(config)
 
     def get_command(self) -> List[str]:
         cmd = [
             sys.executable,
             "analysis_generator.py",
-            "--classified-file", os.path.join("outputs", "classified_results.json"),
-            "--abstracts-file", os.path.join("outputs", "integrated_abstracts.json"),
-            "--domain-stats-file", os.path.join("outputs", "domain_statistics.csv"),
+            "--classified-file", self.get_output_path("classified_results.json"),
+            "--abstracts-file", self.get_output_path("integrated_abstracts.json"),
+            "--domain-stats-file", self.get_output_path("domain_statistics.csv"),
             "--figures-dir", self.config.figures_dir
         ]
         return cmd
@@ -260,7 +285,7 @@ class AnalysisPhase(PhaseRunner):
 
 class ReportPhase(PhaseRunner):
     def __init__(self, config: PipelineConfig):
-        self.config = config
+        super().__init__(config)
 
     def get_command(self) -> List[str]:
         cmd = [
@@ -285,17 +310,17 @@ class ReportPhase(PhaseRunner):
 class ClassificationPhase(PhaseRunner):
     """Phase runner for article classification using NLP models."""
     def __init__(self, config: PipelineConfig):
-        self.config = config
+        super().__init__(config)
         
     def get_command(self) -> List[str]:
         """For backward compatibility with subprocess execution"""
         cmd = [
             sys.executable,
             "nlp_classifier_anthropic.py",
-            "--input", os.path.join("outputs", "domain_analyzed_results.json"),
-            "--output", os.path.join("outputs", "classified_results.json"),
+            "--input", self.get_output_path("domain_analyzed_results.json"),
+            "--output", self.get_output_path("classified_results.json"),
             "--questions", "questions.json",
-            "--api-key-file", os.path.join("secrets", "anthropic-apikey")
+            "--api-key-file", self.get_secret_path("anthropic-apikey")
         ]
         
         return cmd
@@ -309,14 +334,14 @@ class ClassificationPhase(PhaseRunner):
             print(f"\n===== EJECUTANDO: {self.get_description()} =====")
             
             # Import classification module
-            from nlp_classifier_anthropic import classify_articles, progress_callback
+            from analysis.nlp_classifier_anthropic import classify_articles, progress_callback
             
             # Run classification
             success, summary = classify_articles(
-                input_file=os.path.join("outputs", "domain_analyzed_results.json"),
+                input_file=self.get_output_path("domain_analyzed_results.json"),
                 questions_file="questions.json",
-                output_file=os.path.join("outputs", "classified_results.json"),
-                api_key_file=os.path.join("secrets", "anthropic-apikey"),
+                output_file=self.get_output_path("classified_results.json"),
+                api_key_file=self.get_secret_path("anthropic-apikey"),
                 batch_size=5,
                 sequential=True,
                 callback=progress_callback
@@ -332,16 +357,16 @@ class ClassificationPhase(PhaseRunner):
 class DomainAnalysisPhase(PhaseRunner):
     """Phase runner for domain analysis. Directly implements the domain analysis logic."""
     def __init__(self, config: PipelineConfig):
-        self.config = config
+        super().__init__(config)
         
     def get_command(self) -> List[str]:
         """For backward compatibility with subprocess execution"""
         cmd = [
             sys.executable,
             "domain_analysis.py",
-            "--input-file", os.path.join("outputs", "integrated_results.json"),
-            "--output-results", os.path.join("outputs", "domain_analyzed_results.json"),
-            "--output-stats", os.path.join("outputs", "domain_statistics.csv"),
+            "--input-file", self.get_output_path("integrated_results.json"),
+            "--output-results", self.get_output_path("domain_analyzed_results.json"),
+            "--output-stats", self.get_output_path("domain_statistics.csv"),
             "--domain1", self.config.domain1,
             "--domain2", self.config.domain2
         ]
@@ -359,9 +384,6 @@ class DomainAnalysisPhase(PhaseRunner):
         try:
             print(f"\n===== EJECUTANDO: {self.get_description()} =====")
             
-            # Create output directory
-            os.makedirs("outputs", exist_ok=True)
-            
             # Load domain terms
             domain1_terms = self._load_domain_terms(self.config.domain1)
             domain2_terms = self._load_domain_terms(self.config.domain2)
@@ -371,15 +393,21 @@ class DomainAnalysisPhase(PhaseRunner):
             domain_names = ["IA", "Pronóstico", "Pesquerías"]
             
             # Run domain analysis
-            self._run_domain_analysis(
-                input_file=os.path.join("outputs", "integrated_results.json"),
-                output_results_file=os.path.join("outputs", "domain_analyzed_results.json"),
-                output_stats_file=os.path.join("outputs", "domain_statistics.csv"),
+            results, stats = self._run_domain_analysis(
+                input_file=self.get_output_path("integrated_results.json"),
+                output_results_file=self.get_output_path("domain_analyzed_results.json"),
+                output_stats_file=self.get_output_path("domain_statistics.csv"),
                 domain1_terms=domain1_terms,
                 domain2_terms=domain2_terms,
                 domain3_terms=domain3_terms,
                 domain_names=domain_names
             )
+            
+            # Save updated results
+            self._save_updated_results(results, self.get_output_path("domain_analyzed_results.json"))
+            
+            # Save statistics to CSV
+            self._save_stats_csv(stats, self.get_output_path("domain_statistics.csv"))
             
             return True
             
@@ -412,7 +440,7 @@ class DomainAnalysisPhase(PhaseRunner):
         domain2_terms: List[str],
         domain3_terms: List[str] = None,
         domain_names: List[str] = None
-    ) -> None:
+    ) -> Tuple[List[Dict[Any, Any]], Dict[str, Any]]:
         """Execute domain analysis."""
         try:
             print(f"Iniciando análisis de dominio...")
@@ -422,7 +450,7 @@ class DomainAnalysisPhase(PhaseRunner):
             
             if not results:
                 print("No se encontraron resultados para analizar.")
-                return
+                return [], {}
             
             # Prepare domain list
             domain_terms_list = [domain1_terms, domain2_terms]
@@ -436,15 +464,10 @@ class DomainAnalysisPhase(PhaseRunner):
                 domain_names.extend([f"Dominio{i+1}" for i in range(len(domain_names), len(domain_terms_list))])
             
             # Analyze domains
-            self._analyze_domains(results, domain_terms_list, domain_names)
-            
-            # Save updated results
-            self._save_updated_results(results, output_results_file)
-            
-            # Save statistics to CSV
-            self._save_stats_csv(stats, output_stats_file)
+            results, stats = self._analyze_domains(results, domain_terms_list, domain_names)
             
             print(f"Análisis de dominio completado correctamente.")
+            return results, stats
             
         except Exception as e:
             print(f"Error durante el análisis de dominio: {str(e)}")
@@ -649,14 +672,14 @@ class DomainAnalysisPhase(PhaseRunner):
 class TableExportPhase(PhaseRunner):
     """Phase runner for exporting article tables."""
     def __init__(self, config: PipelineConfig):
-        self.config = config
+        super().__init__(config)
 
     def get_command(self) -> List[str]:
         """For backward compatibility with subprocess execution"""
         cmd = [
             sys.executable,
             "export_articles_table.py",
-            "--input", os.path.join("outputs", "classified_results.json"),
+            "--input", self.get_output_path("classified_results.json"),
             "--output", self.config.table_file,
             "--format", self.config.table_format
         ]
@@ -670,10 +693,10 @@ class TableExportPhase(PhaseRunner):
         try:
             print(f"\n===== EJECUTANDO: {self.get_description()} =====")
             
-            from export_articles_table import export_articles_table
+            from analysis.export_articles_table import export_articles_table
             
             success = export_articles_table(
-                input_file=os.path.join("outputs", "classified_results.json"),
+                input_file=self.get_output_path("classified_results.json"),
                 output_file=self.config.table_file,
                 format=self.config.table_format
             )
@@ -686,4 +709,3 @@ class TableExportPhase(PhaseRunner):
         except Exception as e:
             print(f"\nERROR: Ocurrió una excepción durante la exportación de tabla: {str(e)}")
             return False
-

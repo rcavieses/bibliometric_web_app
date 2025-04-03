@@ -14,40 +14,53 @@ import tempfile
 import pandas as pd
 import streamlit as st
 from pathlib import Path
-import firebase_admin
-from firebase_admin import credentials, firestore, auth, storage
 from datetime import datetime
+import firebase_admin
+from firebase_admin import credentials, firestore, auth
 
-# Add the parent directory to the path so we can import our modules
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 # Import the core modules
-from core.pipeline_executor import PipelineExecutor
-from core.config_manager import PipelineConfig
-
-# Import authentication utilities
-from web.auth_utils import (
-    initialize_firebase_admin, 
-    get_firestore_db,
-    get_user_document, 
-    signup_with_email_password,
-    sign_in_with_email_password,
-    sign_out,
-    ensure_auth_valid,
-    is_admin,
-    reset_password
+from src.config.config_manager import PipelineConfig
+from src.core.pipeline_executor import PipelineExecutor
+from src.web.auth_utils import (
+    initialize_firebase_admin, sign_in_with_email_password, 
+    signup_with_email_password, sign_out, ensure_auth_valid, 
+    get_user_document, is_admin, reset_password
 )
 
-def get_api_key(service_name):
-    """Get API key from Firestore"""
-    if not st.session_state.get("user_id"):
-        return None
-    
+
+# Firebase helper functions
+def get_firestore_db():
+    """Get Firestore database instance"""
+    if initialize_firebase_admin():
+        return firestore.client()
+    return None
+
+def get_user_document(user_id):
+    """Get user document from Firestore"""
     db = get_firestore_db()
     if db:
-        api_key_doc = db.collection('api_keys').document(service_name).get()
-        if api_key_doc.exists:
-            return api_key_doc.to_dict().get('key')
+        return db.collection('users').document(user_id)
+    return None
+
+def get_api_key(service_name):
+    """Get API key from local file"""
+    try:
+        key_paths = {
+            'anthropic': os.path.join("secrets", "anthropic-apikey"),
+            'sciencedirect': os.path.join("secrets", "sciencedirect_apikey.txt")
+        }
+        
+        if service_name not in key_paths:
+            return None
+            
+        key_path = key_paths[service_name]
+        if os.path.exists(key_path):
+            with open(key_path, 'r') as f:
+                return f.read().strip()
+    except Exception as e:
+        st.error(f"Error loading API key for {service_name}: {str(e)}")
     return None
 
 def log_api_usage(service_name, user_id):
@@ -107,79 +120,41 @@ def setup_pipeline_config(search_params):
     temp_dir = os.path.join(tempfile.gettempdir(), 'bibliometric_analysis')
     os.makedirs(temp_dir, exist_ok=True)
     
-    # Create subdirectories
-    figures_dir = os.path.join(temp_dir, 'figures')
-    os.makedirs(figures_dir, exist_ok=True)
-    outputs_dir = os.path.join(temp_dir, 'outputs')
-    os.makedirs(outputs_dir, exist_ok=True)
-    
     # Create domain CSV files
     domain_files = {}
     for i, domain in enumerate(['domain1', 'domain2', 'domain3']):
-        domain_path = os.path.join(temp_dir, f"Domain{i+1}.csv")
-        # Default empty files for each domain
-        with open(domain_path, 'w', encoding='utf-8') as f:
-            if domain in search_params and search_params[domain]:
+        if domain in search_params and search_params[domain]:
+            domain_path = os.path.join(temp_dir, f"Domain{i+1}.csv")
+            with open(domain_path, 'w', encoding='utf-8') as f:
                 for term in search_params[domain].split('\n'):
                     if term.strip():
                         f.write(f"{term.strip()}\n")
-            else:
-                # Write at least one line to avoid errors
-                f.write("placeholder_term\n")
-        # Update the config parameter with the real parameter name (not path)
-        domain_files[f"domain{i+1}"] = domain_path
+            domain_files[f"domain{i+1}"] = domain_path
     
-    # Set up API keys in secrets directory (but don't add to config_params)
-    for service in ['anthropic', 'sciencedirect']:
-        key = get_api_key(service)
-        if key:
-            # Ensure the secrets directory exists in the temp directory
-            secrets_dir = os.path.join(temp_dir, 'secrets')
-            os.makedirs(secrets_dir, exist_ok=True)
-            
-            # Save the key to the file
-            key_path = os.path.join(secrets_dir, f"{service}-apikey")
-            with open(key_path, 'w') as f:
-                f.write(key)
+    # Set up API keys
+    api_keys = {}
+    api_keys["anthropic_api_path"] = "anthropic-apikey"
+    api_keys["sciencedirect_api_path"] = "sciencedirect_apikey.txt"
+    
+    # Create output directories
+    figures_dir = os.path.join(temp_dir, 'figures')
+    os.makedirs(figures_dir, exist_ok=True)
     
     # Create configuration
     config_params = {
         'max_results': int(search_params.get('max_results', 100)),
         'year_start': int(search_params.get('year_start', 2008)),
         'figures_dir': figures_dir,
-        'report_file': os.path.join(temp_dir, 'report.md'),
-        'generate_pdf': search_params.get('generate_pdf', False),
-        'pandoc_path': None,
-        'table_file': os.path.join(temp_dir, 'articles_table.csv'),
-        'table_format': 'csv',
-        'skip_searches': search_params.get('skip_searches', False),
-        'skip_integration': search_params.get('skip_integration', False),
-        'skip_domain_analysis': search_params.get('skip_domain_analysis', False),
-        'skip_classification': search_params.get('skip_classification', False),
-        'skip_table': search_params.get('skip_table', False),
-        'only_search': search_params.get('search_only', False),
-        'only_analysis': search_params.get('analysis_only', False),
-        'only_report': search_params.get('report_only', False)
+        **domain_files,
+        **api_keys
     }
-    
-    # Add domain files to the configuration
-    for key, value in domain_files.items():
-        config_params[key] = value
     
     # Add optional parameters
     if search_params.get('year_end'):
         config_params['year_end'] = int(search_params['year_end'])
-    else:
-        config_params['year_end'] = None
     
     if search_params.get('email'):
         config_params['email'] = search_params['email']
-    else:
-        config_params['email'] = None
-    
-    # Add missing default values
-    if 'domain3' not in config_params:
-        config_params['domain3'] = ""
     
     # Create the config object
     return PipelineConfig(**config_params)
@@ -189,46 +164,13 @@ def render_login_page():
     """Render the login/signup page"""
     st.title("Bibliometric Analysis - Login")
     
-    # Check for Firebase Web API Key first
-    from web.auth_utils import get_firebase_web_api_key
-    api_key = get_firebase_web_api_key()
-    
-    if not api_key:
-        st.error("Firebase Web API Key not found or invalid")
-        
-        # Allow setting API key directly
-        st.subheader("Setup Firebase API Key")
-        st.markdown("""
-        To use the authentication system, you need to add your Firebase Web API Key.
-        You can find this in your Firebase Project Settings → General tab.
-        """)
-        
-        with st.form("api_key_setup"):
-            web_api_key = st.text_input("Firebase Web API Key", type="password")
-            submit = st.form_submit_button("Save API Key")
-            
-            if submit and web_api_key:
-                try:
-                    # Save to file
-                    import os
-                    os.makedirs(os.path.dirname(os.path.join("secrets", "firebase_web_api_key.txt")), exist_ok=True)
-                    with open(os.path.join("secrets", "firebase_web_api_key.txt"), "w") as f:
-                        f.write(web_api_key)
-                    st.success("API Key saved successfully! Please reload the app.")
-                    st.info("You can also set the FIREBASE_WEB_API_KEY environment variable.")
-                except Exception as e:
-                    st.error(f"Failed to save API key: {str(e)}")
-                    st.info("As an alternative, you can set the FIREBASE_WEB_API_KEY environment variable.")
-        
-        return
-
     tab1, tab2, tab3 = st.tabs(["Login", "Sign Up", "Reset Password"])
     
     with tab1:
         email = st.text_input("Email", key="login_email")
         password = st.text_input("Password", type="password", key="login_password")
         
-        if st.button("Login"):
+        if st.button("Login", key="login_button"):
             if email and password:
                 user_id, message = sign_in_with_email_password(email, password)
                 if user_id:
@@ -246,7 +188,7 @@ def render_login_page():
         password = st.text_input("Password", type="password", key="signup_password")
         password_confirm = st.text_input("Confirm Password", type="password", key="signup_password_confirm")
         
-        if st.button("Sign Up"):
+        if st.button("Sign Up", key="signup_button"):
             if display_name and email and password and password_confirm:
                 if password == password_confirm:
                     user_id, message = signup_with_email_password(email, password, display_name)
@@ -260,10 +202,11 @@ def render_login_page():
                     st.error("Passwords do not match")
             else:
                 st.warning("Please fill in all fields")
-                
+    
     with tab3:
         email = st.text_input("Email", key="reset_email")
-        if st.button("Reset Password"):
+        
+        if st.button("Send Reset Link", key="reset_button"):
             if email:
                 success, message = reset_password(email)
                 if success:
@@ -494,121 +437,33 @@ def render_results_page():
                 'Model': ["Neural Networks", "Random Forest", "Support Vector Machines", "Decision Trees", "Other"],
                 'Count': [45, 32, 25, 18, 30]
             })
-            
-            # Use Plotly for pie chart instead of st.pie_chart which doesn't exist
-            import plotly.express as px
-            fig = px.pie(model_data, values='Count', names='Model', title='Model Distribution')
-            st.plotly_chart(fig)
+            st.pie_chart(model_data)
         
         # Download options
         st.subheader("Download Options")
         col1, col2, col3 = st.columns(3)
-
-        # Prepare downloadable content
-        try:
-            json_data = json.loads(result_data.get('data', "{}"))
-            # Convert to CSV
-            csv_data = ""
-            if isinstance(json_data, dict) and json_data:
-                # Try to convert to DataFrame for proper CSV formatting
-                try:
-                    df = pd.DataFrame(json_data)
-                    csv_data = df.to_csv(index=False)
-                except:
-                    # Fallback: convert dict to CSV manually
-                    csv_data = "\n".join([f"{k},{v}" for k, v in json_data.items()])
-            else:
-                csv_data = "No data available"
-            
-            # Create a simple markdown report
-            md_data = f"""# Bibliometric Analysis Report
-Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-## Search Parameters
-- Year Range: {search_params.get('year_start', 'N/A')} - {search_params.get('year_end', 'Present')}
-- Max Results: {search_params.get('max_results', 'N/A')}
-
-## Summary
-This report contains the bibliometric analysis results for your search.
-"""
-
-            # Generate simple plot images for visualization download
-            import io
-            import base64
-            from zipfile import ZipFile
-            
-            # Create a buffer for the ZIP file
-            zip_buffer = io.BytesIO()
-            
-            with ZipFile(zip_buffer, 'w') as zip_file:
-                # Add a README file
-                zip_file.writestr("README.txt", "This archive contains visualization figures from your bibliometric analysis.")
-                
-                # Create and save plots
-                
-                # Publications by year
-                fig1 = px.line(
-                    pd.DataFrame({
-                        'Year': list(range(2008, 2023)),
-                        'Publications': [10, 15, 22, 27, 31, 36, 48, 52, 65, 72, 85, 93, 112, 125, 130]
-                    }), 
-                    x="Year", y="Publications", title="Publications by Year"
-                )
-                img_bytes = fig1.to_image(format="png")
-                zip_file.writestr("publications_by_year.png", img_bytes)
-                
-                # Domain distribution
-                fig2 = px.bar(
-                    pd.DataFrame({
-                        'Domain': ["AI/ML", "Forecasting", "Fisheries", "AI+Forecasting", "AI+Fisheries", "Forecasting+Fisheries", "All Three"],
-                        'Count': [250, 180, 120, 80, 60, 40, 25]
-                    }),
-                    x="Domain", y="Count", title="Domain Distribution"
-                )
-                img_bytes = fig2.to_image(format="png")
-                zip_file.writestr("domain_distribution.png", img_bytes)
-                
-                # Model classification
-                fig3 = px.pie(
-                    pd.DataFrame({
-                        'Model': ["Neural Networks", "Random Forest", "Support Vector Machines", "Decision Trees", "Other"],
-                        'Count': [45, 32, 25, 18, 30]
-                    }),
-                    values="Count", names="Model", title="Model Distribution"
-                )
-                img_bytes = fig3.to_image(format="png")
-                zip_file.writestr("model_classification.png", img_bytes)
-            
-            # Get the ZIP file data
-            zip_data = zip_buffer.getvalue()
-            
-        except Exception as e:
-            st.warning(f"Error preparing download files: {str(e)}")
-            csv_data = "Error preparing CSV data"
-            md_data = "Error preparing markdown report"
-            zip_data = b"Error preparing ZIP file"
         
         with col1:
             st.download_button(
                 "Download Data (CSV)",
-                data=csv_data,
-                file_name=f"bibliometric_results_{datetime.now().strftime('%Y%m%d')}.csv",
+                data=result_data.get('data', "{}"),
+                file_name=f"bibliometric_results_{timestamp.strftime('%Y%m%d')}.csv",
                 mime="text/csv"
             )
         
         with col2:
             st.download_button(
                 "Download Report (MD)",
-                data=md_data,
-                file_name=f"bibliometric_report_{datetime.now().strftime('%Y%m%d')}.md",
+                data=result_data.get('data', "{}"),
+                file_name=f"bibliometric_report_{timestamp.strftime('%Y%m%d')}.md",
                 mime="text/markdown"
             )
         
         with col3:
             st.download_button(
                 "Download Visualizations (ZIP)",
-                data=zip_data,
-                file_name=f"bibliometric_figures_{datetime.now().strftime('%Y%m%d')}.zip",
+                data=result_data.get('data', "{}"),
+                file_name=f"bibliometric_figures_{timestamp.strftime('%Y%m%d')}.zip",
                 mime="application/zip"
             )
 
@@ -717,256 +572,21 @@ def render_api_settings_page():
     """Render the API settings page"""
     st.title("API Settings")
     
-    # Check if user has admin privileges
-    user_doc = get_user_document(st.session_state["user_id"])
-    if not user_doc:
-        st.error("Could not retrieve user information")
+    # Verify user is authenticated
+    if not ensure_auth_valid():
+        st.error("Please log in to access API settings")
         return
-    
-    user_data = user_doc.get().to_dict()
-    is_admin = user_data.get('role') == 'admin'
-    
-    if not is_admin:
+        
+    # Check if user has admin privileges
+    if not is_admin():
         st.warning("You need administrator privileges to manage API keys.")
         return
     
-    # Get current API keys
+    # Get Firestore database
     db = get_firestore_db()
     if not db:
-        st.error("Could not connect to the database")
+        st.error("Could not connect to database")
         return
-    
-    api_keys = db.collection('api_keys').stream()
-    api_keys_dict = {doc.id: doc.to_dict() for doc in api_keys}
-    
-    # Display API key management interface
-    st.subheader("Manage API Keys")
-    
-    with st.form("api_keys_form"):
-        # Anthropic API
-        anthropic_key = api_keys_dict.get('anthropic', {}).get('key', '')
-        anthropic_masked = "•" * len(anthropic_key) if anthropic_key else ""
-        
-        st.text_input("Anthropic API Key", value=anthropic_masked, disabled=True)
-        new_anthropic_key = st.text_input("New Anthropic API Key (leave empty to keep current)")
-        
-        # Science Direct API
-        sciencedirect_key = api_keys_dict.get('sciencedirect', {}).get('key', '')
-        sciencedirect_masked = "•" * len(sciencedirect_key) if sciencedirect_key else ""
-        
-        st.text_input("Science Direct API Key", value=sciencedirect_masked, disabled=True)
-        new_sciencedirect_key = st.text_input("New Science Direct API Key (leave empty to keep current)")
-        
-        submitted = st.form_submit_button("Update API Keys")
-        
-        if submitted:
-            # Update Anthropic API key
-            if new_anthropic_key:
-                db.collection('api_keys').document('anthropic').set({
-                    'key': new_anthropic_key,
-                    'updated_at': firestore.SERVER_TIMESTAMP,
-                    'updated_by': st.session_state["user_id"]
-                })
-            
-            # Update Science Direct API key
-            if new_sciencedirect_key:
-                db.collection('api_keys').document('sciencedirect').set({
-                    'key': new_sciencedirect_key,
-                    'updated_at': firestore.SERVER_TIMESTAMP,
-                    'updated_by': st.session_state["user_id"]
-                })
-            
-            if new_anthropic_key or new_sciencedirect_key:
-                st.success("API keys updated successfully!")
-                time.sleep(1)
-                st.rerun()
-    
-    # API usage statistics
-    st.subheader("API Usage Statistics")
-    
-    # Get API usage statistics
-    api_usage_stats = {
-        'anthropic': 0,
-        'sciencedirect': 0
-    }
-    
-    usage_docs = db.collection('api_usage').stream()
-    for doc in usage_docs:
-        service = doc.to_dict().get('service')
-        if service in api_usage_stats:
-            api_usage_stats[service] += 1
-    
-    # Display usage statistics
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.metric("Anthropic API Calls", api_usage_stats['anthropic'])
-    
-    with col2:
-        st.metric("Science Direct API Calls", api_usage_stats['sciencedirect'])
-    
-    # User usage breakdown
-    st.subheader("User Usage Breakdown")
-    
-    user_usage = {}
-    usage_docs = db.collection('api_usage').stream()
-    for doc in usage_docs:
-        usage_data = doc.to_dict()
-        user_id = usage_data.get('user_id')
-        service = usage_data.get('service')
-        
-        if user_id not in user_usage:
-            user_usage[user_id] = {
-                'anthropic': 0,
-                'sciencedirect': 0
-            }
-        
-        if service in user_usage[user_id]:
-            user_usage[user_id][service] += 1
-    
-    # Convert to DataFrame for display
-    if user_usage:
-        usage_data = []
-        for user_id, services in user_usage.items():
-            # Get user name
-            user_doc = db.collection('users').document(user_id).get()
-            user_name = user_doc.to_dict().get('display_name', 'Unknown') if user_doc.exists else 'Unknown'
-            
-            usage_data.append({
-                'User': user_name,
-                'Anthropic API': services['anthropic'],
-                'Science Direct API': services['sciencedirect'],
-                'Total': services['anthropic'] + services['sciencedirect']
-            })
-        
-        usage_df = pd.DataFrame(usage_data)
-        st.dataframe(usage_df, use_container_width=True)
-    else:
-        st.info("No API usage data available")
-
-def render_admin_page():
-    """Render the admin dashboard page"""
-    st.title("Admin Dashboard")
-    
-    # Check if user has admin privileges
-    user_doc = get_user_document(st.session_state["user_id"])
-    if not user_doc:
-        st.error("Could not retrieve user information")
-        return
-    
-    user_data = user_doc.get().to_dict()
-    is_admin = user_data.get('role') == 'admin'
-    
-    if not is_admin:
-        st.warning("You need administrator privileges to access this page.")
-        return
-    
-    # Get database connection
-    db = get_firestore_db()
-    if not db:
-        st.error("Could not connect to the database")
-        return
-    
-    # Display system metrics
-    st.subheader("System Metrics")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    # Calculate metrics
-    # In a real app, these would be actual queries to Firestore
-    total_users = 15
-    total_searches = 342
-    api_calls = 1283
-    active_users = 8
-    
-    with col1:
-        st.metric("Total Users", total_users)
-    
-    with col2:
-        st.metric("Total Searches", total_searches)
-    
-    with col3:
-        st.metric("API Calls", api_calls)
-    
-    with col4:
-        st.metric("Active Users (24h)", active_users)
-    
-    # User management
-    st.subheader("User Management")
-    
-    # Get all users
-    users = db.collection('users').stream()
-    users_list = []
-    
-    for user in users:
-        user_data = user.to_dict()
-        users_list.append({
-            'id': user.id,
-            'name': user_data.get('display_name', 'Unknown'),
-            'email': user_data.get('email', 'Unknown'),
-            'role': user_data.get('role', 'user'),
-            'searches': user_data.get('search_count', 0),
-            'created_at': user_data.get('created_at', datetime.now())
-        })
-    
-    # Convert to DataFrame for display
-    if users_list:
-        users_df = pd.DataFrame(users_list)
-        
-        # Add action buttons
-        selected_user = st.selectbox("Select User", users_df['email'])
-        selected_user_id = users_df[users_df['email'] == selected_user]['id'].iloc[0]
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if st.button("Set as Admin"):
-                db.collection('users').document(selected_user_id).update({
-                    'role': 'admin'
-                })
-                st.success(f"User {selected_user} is now an admin")
-                time.sleep(1)
-                st.rerun()
-        
-        with col2:
-            if st.button("Set as User"):
-                db.collection('users').document(selected_user_id).update({
-                    'role': 'user'
-                })
-                st.success(f"User {selected_user} is now a regular user")
-                time.sleep(1)
-                st.rerun()
-        
-        with col3:
-            if st.button("Reset Search Count"):
-                db.collection('users').document(selected_user_id).update({
-                    'search_count': 0
-                })
-                st.success(f"Reset search count for {selected_user}")
-                time.sleep(1)
-                st.rerun()
-        
-        # Display user table
-        st.dataframe(users_df[['name', 'email', 'role', 'searches', 'created_at']], use_container_width=True)
-    else:
-        st.info("No users found")
-    
-    # System logs
-    st.subheader("System Logs")
-    
-    # In a real app, you would have a logs collection
-    # This is just a placeholder
-    log_data = [
-        {"timestamp": "2025-04-02 10:15:23", "level": "INFO", "message": "User login: john@example.com"},
-        {"timestamp": "2025-04-02 09:45:12", "level": "WARNING", "message": "API rate limit approaching: Anthropic"},
-        {"timestamp": "2025-04-02 09:30:05", "level": "ERROR", "message": "Search pipeline failed for user sarah@example.com"},
-        {"timestamp": "2025-04-02 08:15:47", "level": "INFO", "message": "API key updated: Science Direct"},
-        {"timestamp": "2025-04-01 23:45:33", "level": "INFO", "message": "New user registered: robert@example.com"}
-    ]
-    
-    logs_df = pd.DataFrame(log_data)
-    st.dataframe(logs_df, use_container_width=True)
-
 def main():
     """Main function to run the Streamlit app"""
     # Set page config
@@ -984,15 +604,8 @@ def main():
     if "page" not in st.session_state:
         st.session_state["page"] = "search"
     
-    # Verify token validity if already authenticated
-    if st.session_state.get("authenticated", False):
-        if not ensure_auth_valid():
-            st.warning("Your session has expired. Please log in again.")
-            sign_out()
-            st.rerun()
-    
     # Authentication check
-    if not st.session_state.get("authenticated", False):
+    if not ensure_auth_valid():
         render_login_page()
         return
     
@@ -1026,16 +639,10 @@ def main():
             if st.button("API Settings"):
                 st.session_state["page"] = "api_settings"
                 st.rerun()
-            
-            if st.button("Admin Dashboard"):
-                st.session_state["page"] = "admin"
-                st.rerun()
         
         # Logout button
         if st.button("Logout"):
             sign_out()
-            st.success("You have been logged out.")
-            time.sleep(1)
             st.rerun()
     
     # Render the appropriate page based on session state
@@ -1049,8 +656,8 @@ def main():
         render_profile_page()
     elif st.session_state["page"] == "api_settings":
         render_api_settings_page()
-    elif st.session_state["page"] == "admin":
-        render_admin_page()
+
 
 if __name__ == "__main__":
     main()
+

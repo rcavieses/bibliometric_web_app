@@ -20,21 +20,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_MODEL = "claude-3-5-haiku-20241022"
 
-def load_api_key(filepath: str = "anthropic-apikey") -> str:
-    """
-    Loads the Anthropic API key from a file.
-    
-    Args:
-        filepath: Path to the file containing the API key.
-        
-    Returns:
-        API key as string.
-    """
+def load_api_key(filepath: str = "secrets/anthropic-apikey") -> str:
+    """Load the Anthropic API key from file."""
     try:
-        with open(filepath, 'r') as file:
+        abs_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), filepath)
+        with open(abs_path, 'r') as file:
             return file.read().strip()
     except FileNotFoundError:
-        raise FileNotFoundError(f"File {filepath} with API key not found.")
+        raise FileNotFoundError(f"Anthropic API key file not found at {filepath}")
+    except Exception as e:
+        raise Exception(f"Error loading Anthropic API key: {str(e)}")
 
 def load_articles(filepath: str) -> List[Dict[Any, Any]]:
     """

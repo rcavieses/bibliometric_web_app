@@ -12,8 +12,8 @@ import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from datetime import datetime
-from config.config_manager import ConfigManager, PipelineConfig
-from pipeline.pipeline_executor import PipelineExecutor
+from src.config.config_manager import ConfigManager, PipelineConfig
+from src.core.pipeline_executor import PipelineExecutor
 
 def main():
     """Función principal que coordina la ejecución del pipeline."""

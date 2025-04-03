@@ -76,12 +76,16 @@ root/
 
 ## Installation
 
-### Command-Line Tool
+### Important: Package Installation
+
+To ensure all imports work correctly, install the package in development mode:
 
 ```bash
 # Install the package and dependencies
 pip install -e .
 ```
+
+This step is crucial as it adds the `src` directory to your Python path, allowing absolute imports like `from src.config.config_manager import PipelineConfig` to work correctly.
 
 ### Web Application
 
@@ -90,6 +94,9 @@ The web application uses Streamlit and Firebase. See `src/web/README.md` for det
 ```bash
 # Install required packages
 pip install -r requirements.txt
+
+# Install the package in development mode (required for imports to work)
+pip install -e .
 
 # Initialize Firebase (after setting up Firebase project)
 python src/web/init_firebase.py --admin-email your@email.com --admin-password password --admin-name "Admin User"
