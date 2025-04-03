@@ -1,0 +1,27 @@
+version: '3'
+
+services:
+  test:
+    build:
+      context: ..
+      dockerfile: tests/Dockerfile.test
+    volumes:
+      - ../:/app
+      - ../secrets:/app/secrets:ro
+    environment:
+      - PYTHONPATH=/app
+      - TESTING=1
+    command: pytest -v
+
+  web-test:
+    build:
+      context: ..
+      dockerfile: src/web/Dockerfile
+    ports:
+      - "8501:8501"
+    volumes:
+      - ../secrets:/app/secrets:ro
+      - ../data:/app/data:ro
+    environment:
+      - PYTHONPATH=/app
+      - TESTING=1
