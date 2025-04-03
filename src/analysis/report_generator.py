@@ -98,6 +98,8 @@ class GenericReportGenerator:
         return os.path.join(self.figures_dir, figure_name)
     
     def generate_report(self):
+        if hasattr(self, '_report_generated'):
+            return self._report_generated
         """Genera el informe simplificado en formato Markdown."""
         print(f"\nGenerando informe en formato Markdown: {self.output_file}...")
         
@@ -121,7 +123,8 @@ class GenericReportGenerator:
         except Exception as e:
             print(f"Error al guardar el informe: {str(e)}")
             
-        return full_report
+        self._report_generated = True
+        return self._report_generated
         
     def _generate_header(self) -> str:
         """Genera el encabezado del informe."""

@@ -9,9 +9,17 @@ class PipelineExecutor:
     def __init__(self, config: PipelineConfig):
         self.config = config
         self.logger = Logger()
+        self._execution_completed = False
         
     def execute(self) -> bool:
         """Execute all pipeline phases according to configuration."""
+        if not hasattr(self, '_execution_completed'):  # Primero verificar si existe
+            self._execution_completed = False
+
+        if self._execution_completed:
+            print("Pipeline already executed. Create a new instance.")
+            return False
+        
         if not self.validate_config():
             self.logger.log_error("Invalid configuration")
             return False
@@ -27,11 +35,11 @@ class PipelineExecutor:
                 phase_name = phase.get_description()
                 self.logger.start_phase(phase_name)
                 
-                # Reportar inicio de fase
+                # Report phase start
                 progress = i / total_phases
                 self.report_progress(phase_name, progress, f"Starting {phase_name} phase...")
                 
-                # Ejecutar la fase
+                # Execute the phase
                 phase_success = phase.run()
                 details = {"phase": phase_name}
                 
@@ -39,15 +47,18 @@ class PipelineExecutor:
                     success = False
                     details["error"] = "Phase execution failed"
                     self.report_progress(phase_name, progress, f"Error in {phase_name} phase")
+                    self.logger.end_phase(phase_success, details)
+                    # Stop execution immediately after analysis phase failure
+                    if "Analysis" in phase_name:
+                        self.logger.log_error("Analysis phase failed - stopping pipeline")
+                        break
+                    break  # Stop for other phase failures too
                 else:
-                    # Reportar finalización de fase
+                    # Report phase completion
                     progress = (i + 1) / total_phases
                     self.report_progress(phase_name, progress, f"Completed {phase_name} phase")
                 
                 self.logger.end_phase(phase_success, details)
-                
-                if not phase_success:
-                    break  # Stop execution if a phase fails
 
         except Exception as e:
             self.logger.log_error(e)
@@ -63,7 +74,7 @@ class PipelineExecutor:
         
         self.logger.end_pipeline(success, stats)
         self.logger.save_summary("pipeline_execution.json")
-        
+        self._execution_completed = True
         return success
 
     def validate_config(self) -> bool:
@@ -92,29 +103,23 @@ class PipelineExecutor:
     def _get_phases_to_run(self) -> List[PhaseRunner]:
         """Determine which phases to run based on configuration."""
         phases = []
-        
-        # Only add phases based on configuration
-        if not (self.config.only_analysis or self.config.only_report):
-            # Search phase includes the initial data collection
-            phases.append(SearchPhase(self.config))
-            
-            # Domain analysis is now a separate phase in the new architecture
-            if not self.config.skip_domain_analysis:
-                phases.append(DomainAnalysisPhase(self.config))
-                phases.append(ClassificationPhase(self.config))
-            # Classification phase using NLP (Claude)
-        if not (self.config.only_search or self.config.only_report):
-            phases.append(AnalysisPhase(self.config))
-            
-        if not (self.config.only_search or self.config.only_analysis):
+        executed_phases = set()
+     
+        # First check if we only want to generate the report
+        if self.config.only_report:
             phases.append(ReportPhase(self.config))
-        
-        # Add table export phase if not skipped
-        if not self.config.skip_table:
-            phases.append(TableExportPhase(self.config))
+            return phases
             
-        # If no specific phase is requested, run all
-        if not phases:
+        # Then check if we only want analysis
+        if self.config.only_analysis:
+            phases.append(AnalysisPhase(self.config))
+            if not self.config.skip_table:
+                phases.append(TableExportPhase(self.config))
+            return phases
+        
+        # If we get here, we either want search or all phases
+        if not self.config.only_search:
+            # Full pipeline
             all_phases = [
                 SearchPhase(self.config),
                 DomainAnalysisPhase(self.config),
@@ -127,6 +132,7 @@ class PipelineExecutor:
             # Filter out phases that should be skipped
             if self.config.skip_domain_analysis:
                 all_phases = [p for p in all_phases if not isinstance(p, DomainAnalysisPhase)]
+                all_phases = [p for p in all_phases if not isinstance(p, ClassificationPhase)]
                 
             if self.config.skip_classification:
                 all_phases = [p for p in all_phases if not isinstance(p, ClassificationPhase)]
@@ -135,9 +141,26 @@ class PipelineExecutor:
                 all_phases = [p for p in all_phases if not isinstance(p, TableExportPhase)]
                 
             phases = all_phases
-            
+        else:
+            # Only search phase
+            phases = [SearchPhase(self.config)]
+        
         return phases
-
+    def get_results(self) -> Dict[str, Any]:
+        """Get the results of the pipeline execution.
+        
+        Returns:
+            Dict[str, Any]: Dictionary containing pipeline results and statistics
+        """
+        if not self._execution_completed:
+            raise RuntimeError("Pipeline has not been executed yet.")
+            
+        return {
+            "execution_completed": self._execution_completed,
+            "configuration": self._get_config_summary(),
+            "statistics": self.logger.get_statistics() if hasattr(self.logger, "get_statistics") else {},
+            "phases_executed": [phase.get_description() for phase in self._get_phases_to_run()]
+        }
     def _get_config_summary(self) -> Dict[str, Any]:
         """Create a summary of the current configuration."""
         return {

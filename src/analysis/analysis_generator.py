@@ -15,7 +15,12 @@ Este script:
 """
 
 import os
-import json
+import sys
+
+# Add project root to Python path
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.append(project_root)
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -31,7 +36,7 @@ from adjustText import adjust_text
 import argparse
 import warnings
 import traceback
-from utils.text_normalizer import consolidate_model_counts
+from src.utils.text_normalizer import consolidate_model_counts
 
 # Ignorar advertencias para una salida más limpia
 warnings.filterwarnings("ignore")
@@ -717,22 +722,5 @@ class ResultsAnalyzer:
         except Exception as e:
             print(f"Error al generar la gráfica de autores principales: {str(e)}")
 
-    def generate_ai_models_distribution(results, output_file):
-        """Generate AI models distribution plot with normalized model names."""
-        model_counts = {}
-        
-        for article in results:
-            model = article.get('model_type', 'Not mentioned')
-            if model and model != "Not mentioned":
-                model_counts[model] = model_counts.get(model, 0) + 1
-        
-        # Normalize and consolidate model counts
-        normalized_counts = consolidate_model_counts(model_counts)
-        
-        # Sort by frequency
-        sorted_models = sorted(normalized_counts.items(), key=lambda x: x[1], reverse=True)
-        models, counts = zip(*sorted_models) if sorted_models else ([], [])
-        
-        # Create visualization
-        # ...rest of the visualization code...
+  
 

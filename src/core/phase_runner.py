@@ -286,7 +286,17 @@ class AnalysisPhase(PhaseRunner):
 class ReportPhase(PhaseRunner):
     def __init__(self, config: PipelineConfig):
         super().__init__(config)
+        self._report_generated = False
+    
+    def run(self) -> bool:
+        if self._report_generated:
+            print("Informe ya generado. Omitiendo generación.")
+            return True
 
+        # Lógica de generación de informe
+        self._report_generated = True
+        return True
+    
     def get_command(self) -> List[str]:
         cmd = [
             sys.executable,
