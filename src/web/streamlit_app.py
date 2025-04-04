@@ -160,16 +160,6 @@ def setup_pipeline_config(search_params):
     if search_params.get('email'):
         config_params['email'] = search_params['email']
     
-    # Workflow control options
-    if search_params.get('search_only'):
-        config_params['only_search'] = True
-    if search_params.get('analysis_only'):
-        config_params['only_analysis'] = True
-    if search_params.get('report_only'):
-        config_params['only_report'] = True
-    if search_params.get('generate_pdf'):
-        config_params['generate_pdf'] = True
-    
     # Create the config object
     return PipelineConfig(**config_params)
 
@@ -232,7 +222,7 @@ def render_login_page():
 
 def render_search_page():
     """Render the search configuration page"""
-    st.title("Bibliometric Analysis - Search Configuration")
+    st.title("Bibliometric Analysis - Configuration")
     
     with st.form("search_form"):
         col1, col2 = st.columns(2)
@@ -241,15 +231,8 @@ def render_search_page():
             st.subheader("Search Parameters")
             max_results = st.number_input("Max Results per Source", min_value=10, max_value=1000, value=100, step=10)
             year_start = st.number_input("Start Year", min_value=1900, max_value=datetime.now().year, value=2008)
-            year_end = st.number_input("End Year (optional)", min_value=1900, max_value=datetime.now().year, value=datetime.now().year)
+            year_end = st.number_input("End Year", min_value=1900, max_value=datetime.now().year, value=datetime.now().year)
             email = st.text_input("Email (for Crossref API)")
-        
-        with col2:
-            st.subheader("Workflow Options")
-            search_only = st.checkbox("Run Only Search Phase")
-            analysis_only = st.checkbox("Run Only Analysis Phase")
-            report_only = st.checkbox("Run Only Report Phase")
-            generate_pdf = st.checkbox("Generate PDF Report")
         
         st.subheader("Domain Terms")
         tab1, tab2, tab3 = st.tabs(["Domain 1", "Domain 2", "Domain 3"])
@@ -289,11 +272,7 @@ def render_search_page():
                 'email': email,
                 'domain1': domain1,
                 'domain2': domain2,
-                'domain3': domain3,
-                'search_only': search_only,
-                'analysis_only': analysis_only,
-                'report_only': report_only,
-                'generate_pdf': generate_pdf
+                'domain3': domain3
             }
             
             # Log search parameters

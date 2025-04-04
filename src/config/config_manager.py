@@ -14,33 +14,7 @@ from typing import Optional, Dict, Any
 
 @dataclass
 class PipelineConfig:
-    """Configuration settings for the bibliometric analysis pipeline.
-    
-    Attributes:
-        domain1: Path to CSV file with terms for first domain
-        domain2: Path to CSV file with terms for second domain
-        domain3: Path to CSV file with terms for third domain (optional)
-        max_results: Maximum number of results per search
-        year_start: Start year for filtering results
-        year_end: End year for filtering results (optional)
-        email: Email for academic APIs (optional)
-        
-        figures_dir: Directory to save figures
-        report_file: Output file for the report
-        generate_pdf: Whether to generate PDF report
-        pandoc_path: Path to Pandoc executable (optional)
-        table_file: File for articles table
-        table_format: Format for articles table
-        
-        skip_searches: Whether to skip search phase
-        skip_integration: Whether to skip integration phase
-        skip_domain_analysis: Whether to skip domain analysis phase
-        skip_classification: Whether to skip classification phase
-        skip_table: Whether to skip table generation phase
-        only_search: Whether to run only search phase
-        only_analysis: Whether to run only analysis phase
-        only_report: Whether to run only report phase
-    """
+    """Configuration settings for the bibliometric analysis pipeline."""
     # Search settings
     domain1: str
     domain2: str
@@ -115,15 +89,7 @@ class PipelineConfig:
             generate_pdf=form_data.get('generate_pdf', False),
             pandoc_path=form_data.get('pandoc_path'),
             table_file=form_data.get('table_file', 'articles_table.csv'),
-            table_format=form_data.get('table_format', 'csv'),
-            skip_searches=form_data.get('skip_searches', False),
-            skip_integration=form_data.get('skip_integration', False),
-            skip_domain_analysis=form_data.get('skip_domain_analysis', False),
-            skip_classification=form_data.get('skip_classification', False),
-            skip_table=form_data.get('skip_table', False),
-            only_search=form_data.get('only_search', False),
-            only_analysis=form_data.get('only_analysis', False),
-            only_report=form_data.get('only_report', False),
+            table_format=form_data.get('table_format', 'csv')
         )
 
 
